@@ -1,4 +1,9 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+"""
+To be migrated OUT OF MMSegmentation directory.
+
+This file should perform training the way MMSeg conventionally does,
+but with some Active Learning wrappers that we created.
+"""
 import argparse
 import copy
 import os
@@ -200,7 +205,7 @@ def main():
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
-    print(f"model type: {type(model)}")
+
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(
@@ -211,34 +216,37 @@ def main():
 
     logger.info(model)
 
-    datasets = [build_dataset(cfg.data.train)]
-    print(len(datasets[0]))
-    # if len(cfg.workflow) == 2:
-    #     val_dataset = copy.deepcopy(cfg.data.val)
-    #     val_dataset.pipeline = cfg.data.train.pipeline
-    #     datasets.append(build_dataset(val_dataset))
-    # if cfg.checkpoint_config is not None:
-    #     # save mmseg version, config file content and class names in
-    #     # checkpoints as meta data
-    #     cfg.checkpoint_config.meta = dict(
-    #         mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
-    #         config=cfg.pretty_text,
-    #         CLASSES=datasets[0].CLASSES,
-    #         PALETTE=datasets[0].PALETTE)
-    # # add an attribute for visualization convenience
-    # model.CLASSES = datasets[0].CLASSES
-    # # passing checkpoint meta for saving best checkpoint
-    # meta.update(cfg.checkpoint_config.meta)
 
-    # """ PART 2. Training """
-    # train_segmentor(
-    #     model,
-    #     datasets,
-    #     cfg,
-    #     distributed=distributed,
-    #     validate=(not args.no_validate),
-    #     timestamp=timestamp,
-    #     meta=meta)
+    """ PART 2. Dataset >> to be edited with Active Learning settings """
+    datasets = [build_dataset(cfg.data.train)]
+    if len(cfg.workflow) == 2:
+        val_dataset = copy.deepcopy(cfg.data.val)
+        val_dataset.pipeline = cfg.data.train.pipeline
+        datasets.append(build_dataset(val_dataset))
+    if cfg.checkpoint_config is not None:
+        # save mmseg version, config file content and class names in
+        # checkpoints as meta data
+        cfg.checkpoint_config.meta = dict(
+            mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
+            config=cfg.pretty_text,
+            CLASSES=datasets[0].CLASSES,
+            PALETTE=datasets[0].PALETTE)
+    # add an attribute for visualization convenience
+    model.CLASSES = datasets[0].CLASSES
+    # passing checkpoint meta for saving best checkpoint
+    meta.update(cfg.checkpoint_config.meta)
+
+    """ PART 2. Training >> to be edited with AL settings. """
+    # Apply a wrapper class, for example: 
+    # model = ModelWrapper(model=model, criterion=nn.CrossEntropyLoss())
+    train_segmentor(
+        model, # model is of type torch.nn.Module
+        datasets,
+        cfg,
+        distributed=distributed,
+        validate=(not args.no_validate),
+        timestamp=timestamp,
+        meta=meta)
 
 
 if __name__ == '__main__':
