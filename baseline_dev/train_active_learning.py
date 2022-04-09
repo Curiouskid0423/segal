@@ -1,10 +1,9 @@
 """
-Main file for experimentation. This file should do no more than
-1. Load in Trainer class, and corresponding attributes specified in `config.yaml`
-2. Run the training_loop method
-3. If inference is required in config, run inference as well.
-"""
+To be migrated OUT OF MMSegmentation directory.
 
+This file should perform training the way MMSeg conventionally does,
+but with some Active Learning wrappers that we created.
+"""
 import argparse
 import copy
 import os
@@ -15,55 +14,62 @@ import warnings
 import mmcv
 import torch
 import torch.distributed as dist
+""" MMCV """
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.runner import get_dist_info, init_dist
 from mmcv.utils import Config, DictAction, get_git_hash
-
-import mmseg
-from mmseg.apis import init_random_seed, set_random_seed, train_segmentor
+""" MMSegmentation """
+from mmseg import __version__
+from mmseg.apis import init_random_seed, set_random_seed
 from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
-
+"""Customized"""
+from mmseg_custom import train_al_segmentor
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
-
-    ## Definition of arguments ##
-    parser.add_argument(
-        'config', help='train config file path')
-    parser.add_argument(
-        '--work-dir', help='the dir to save logs and models')
+    parser.add_argument('config', help='train config file path')
+    parser.add_argument('--work-dir', help='the dir to save logs and models')
     parser.add_argument(
         '--load-from', help='the checkpoint file to load weights from')
     parser.add_argument(
         '--resume-from', help='the checkpoint file to resume from')
     parser.add_argument(
-        '--no-validate', action='store_true',
+        '--no-validate',
+        action='store_true',
         help='whether not to evaluate the checkpoint during training')
     group_gpus = parser.add_mutually_exclusive_group()
     group_gpus.add_argument(
-        '--gpus', type=int,
+        '--gpus',
+        type=int,
         help='(Deprecated, please use --gpu-id) number of gpus to use '
         '(only applicable to non-distributed training)')
     group_gpus.add_argument(
-        '--gpu-ids', type=int, nargs='+',
+        '--gpu-ids',
+        type=int,
+        nargs='+',
         help='(Deprecated, please use --gpu-id) ids of gpus to use '
         '(only applicable to non-distributed training)')
     group_gpus.add_argument(
-        '--gpu-id', type=int, default=0,
+        '--gpu-id',
+        type=int,
+        default=0,
         help='id of gpu to use '
         '(only applicable to non-distributed training)')
+    parser.add_argument('--seed', type=int, default=None, help='random seed')
     parser.add_argument(
-        '--seed', type=int, default=None, help='random seed')
-    parser.add_argument(
-        '--diff_seed', action='store_true',
+        '--diff_seed',
+        action='store_true',
         help='Whether or not set different seeds for different ranks')
     parser.add_argument(
-        '--deterministic', action='store_true',
+        '--deterministic',
+        action='store_true',
         help='whether to set deterministic options for CUDNN backend.')
     parser.add_argument(
-        '--options', nargs='+', action=DictAction,
+        '--options',
+        nargs='+',
+        action=DictAction,
         help="--options is deprecated in favor of --cfg_options' and it will "
         'not be supported in version v0.22.0. Override some settings in the '
         'used config, the key-value pair in xxx=yyy format will be merged '
@@ -72,7 +78,9 @@ def parse_args():
         'list/tuple values, e.g. key="[(a,b),(c,d)]" Note that the quotation '
         'marks are necessary and that no white space is allowed.')
     parser.add_argument(
-        '--cfg-options', nargs='+', action=DictAction,
+        '--cfg-options',
+        nargs='+',
+        action=DictAction,
         help='override some settings in the used config, the key-value pair '
         'in xxx=yyy format will be merged into config file. If the value to '
         'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
@@ -80,19 +88,16 @@ def parse_args():
         'Note that the quotation marks are necessary and that no white space '
         'is allowed.')
     parser.add_argument(
-        '--launcher', choices=['none', 'pytorch', 'slurm', 'mpi'],
-        default='none', help='job launcher')
+        '--launcher',
+        choices=['none', 'pytorch', 'slurm', 'mpi'],
+        default='none',
+        help='job launcher')
+    parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument(
-        '--local_rank', type=int, default=0)
-    parser.add_argument(
-        '--auto-resume', action='store_true',
+        '--auto-resume',
+        action='store_true',
         help='resume from the latest checkpoint automatically.')
-
-    ## END of argument definition ##
-    
-    # Actual argument parsing.
     args = parser.parse_args()
-
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
 
@@ -108,8 +113,9 @@ def parse_args():
 
     return args
 
-
 def main():
+
+    """ PART 1. Argument Passing """
     args = parse_args()
 
     cfg = Config.fromfile(args.config)
@@ -132,17 +138,6 @@ def main():
         cfg.load_from = args.load_from
     if args.resume_from is not None:
         cfg.resume_from = args.resume_from
-    if args.gpus is not None:
-        cfg.gpu_ids = range(1)
-        warnings.warn('`--gpus` is deprecated because we only support '
-                      'single GPU mode in non-distributed training. '
-                      'Use `gpus=1` now.')
-    if args.gpu_ids is not None:
-        cfg.gpu_ids = args.gpu_ids[0:1]
-        warnings.warn('`--gpu-ids` is deprecated, please use `--gpu-id`. '
-                      'Because we only support single GPU mode in '
-                      'non-distributed training. Use the first GPU '
-                      'in `gpu_ids` now.')
     if args.gpus is None and args.gpu_ids is None:
         cfg.gpu_ids = [args.gpu_id]
 
@@ -160,8 +155,10 @@ def main():
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
+    
     # dump config
     cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))
+    
     # init the logger before other steps
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
@@ -202,41 +199,50 @@ def main():
     model.init_weights()
 
     # SyncBN is not support for DP
-    if not distributed:
-        warnings.warn(
-            'SyncBN is only supported with DDP. To be compatible with DP, '
-            'we convert SyncBN to BN. Please use dist_train.sh which can '
-            'avoid this error.')
-        model = revert_sync_batchnorm(model)
+    # if not distributed:
+    #     warnings.warn(
+    #         'SyncBN is only supported with DDP. To be compatible with DP, '
+    #         'we convert SyncBN to BN. Please use dist_train.sh which can '
+    #         'avoid this error.')
+    #     model = revert_sync_batchnorm(model)
 
-    logger.info(model)
+    # log the model summary. temporarily commented out since it's taking space.
+    # logger.info(model)
 
-    datasets = [build_dataset(cfg.data.train)]
-    if len(cfg.workflow) == 2:
-        val_dataset = copy.deepcopy(cfg.data.val)
-        val_dataset.pipeline = cfg.data.train.pipeline
-        datasets.append(build_dataset(val_dataset))
-    if cfg.checkpoint_config is not None:
-        # save mmseg version, config file content and class names in
-        # checkpoints as meta data
-        cfg.checkpoint_config.meta = dict(
-            mmseg_version=f'{get_git_hash()[:7]}',
-            config=cfg.pretty_text,
-            CLASSES=datasets[0].CLASSES,
-            PALETTE=datasets[0].PALETTE)
-    # add an attribute for visualization convenience
-    model.CLASSES = datasets[0].CLASSES
-    # passing checkpoint meta for saving best checkpoint
-    meta.update(cfg.checkpoint_config.meta)
-    # train_segmentor(
-    #     model,
-    #     datasets,
-    #     cfg,
-    #     distributed=distributed,
-    #     validate=(not args.no_validate),
-    #     timestamp=timestamp,
-    #     meta=meta)
+    """ PART 2. Dataset >> to be edited with Active Learning settings """
+    # datasets = [build_dataset(cfg.data.train)]
+    dataset = build_dataset(cfg.data.train)
 
 
-if __name__ == "__main__":
+    # if len(cfg.workflow) == 2:
+    #     val_dataset = copy.deepcopy(cfg.data.val)
+    #     val_dataset.pipeline = cfg.data.train.pipeline
+    #     datasets.append(build_dataset(val_dataset))
+    # if cfg.checkpoint_config is not None:
+    #     # save mmseg version, config file content and class names in
+    #     # checkpoints as meta data
+    #     cfg.checkpoint_config.meta = dict(
+    #         mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
+    #         config=cfg.pretty_text,
+    #         CLASSES=datasets[0].CLASSES,
+    #         PALETTE=datasets[0].PALETTE)
+    # # add an attribute for visualization convenience
+    # model.CLASSES = datasets[0].CLASSES
+    # # passing checkpoint meta for saving best checkpoint
+    # meta.update(cfg.checkpoint_config.meta)
+
+    # """ PART 2. Training >> to be edited with AL settings. """
+    # # Apply a wrapper class, for example: 
+    # # model = ModelWrapper(model=model, criterion=nn.CrossEntropyLoss())
+    train_al_segmentor(
+        model, # model is of type torch.nn.Module
+        dataset,
+        cfg,
+        distributed=distributed,
+        validate=(not args.no_validate),
+        timestamp=timestamp,
+        meta=meta)
+
+
+if __name__ == '__main__':
     main()

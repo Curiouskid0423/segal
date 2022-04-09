@@ -1,1 +1,1 @@
-from .heuristics import *
+from .heuristics import Random, Entropy

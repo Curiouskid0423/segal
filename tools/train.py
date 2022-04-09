@@ -186,59 +186,59 @@ def main():
     logger.info(f'Config:\n{cfg.pretty_text}')
 
     # set random seeds
-    seed = init_random_seed(args.seed)
-    seed = seed + dist.get_rank() if args.diff_seed else seed
-    logger.info(f'Set random seed to {seed}, '
-                f'deterministic: {args.deterministic}')
-    set_random_seed(seed, deterministic=args.deterministic)
-    cfg.seed = seed
-    meta['seed'] = seed
-    meta['exp_name'] = osp.basename(args.config)
+    # seed = init_random_seed(args.seed)
+    # seed = seed + dist.get_rank() if args.diff_seed else seed
+    # logger.info(f'Set random seed to {seed}, '
+    #             f'deterministic: {args.deterministic}')
+    # set_random_seed(seed, deterministic=args.deterministic)
+    # cfg.seed = seed
+    # meta['seed'] = seed
+    # meta['exp_name'] = osp.basename(args.config)
 
-    model = build_segmentor(
-        cfg.model,
-        train_cfg=cfg.get('train_cfg'),
-        test_cfg=cfg.get('test_cfg'))
-    model.init_weights()
-    print(f"model type: {type(model)}")
-    # SyncBN is not support for DP
-    if not distributed:
-        warnings.warn(
-            'SyncBN is only supported with DDP. To be compatible with DP, '
-            'we convert SyncBN to BN. Please use dist_train.sh which can '
-            'avoid this error.')
-        model = revert_sync_batchnorm(model)
+    # model = build_segmentor(
+    #     cfg.model,
+    #     train_cfg=cfg.get('train_cfg'),
+    #     test_cfg=cfg.get('test_cfg'))
+    # model.init_weights()
+    # print(f"model type: {type(model)}")
+    # # SyncBN is not support for DP
+    # if not distributed:
+    #     warnings.warn(
+    #         'SyncBN is only supported with DDP. To be compatible with DP, '
+    #         'we convert SyncBN to BN. Please use dist_train.sh which can '
+    #         'avoid this error.')
+    #     model = revert_sync_batchnorm(model)
 
-    logger.info(model)
+    # logger.info(model)
 
-    datasets = [build_dataset(cfg.data.train)]
+    # datasets = [build_dataset(cfg.data.train)]
     
-    if len(cfg.workflow) == 2:
-        val_dataset = copy.deepcopy(cfg.data.val)
-        val_dataset.pipeline = cfg.data.train.pipeline
-        datasets.append(build_dataset(val_dataset))
-    if cfg.checkpoint_config is not None:
-        # save mmseg version, config file content and class names in
-        # checkpoints as meta data
-        cfg.checkpoint_config.meta = dict(
-            mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
-            config=cfg.pretty_text,
-            CLASSES=datasets[0].CLASSES,
-            PALETTE=datasets[0].PALETTE)
-    # add an attribute for visualization convenience
-    model.CLASSES = datasets[0].CLASSES
-    # passing checkpoint meta for saving best checkpoint
-    meta.update(cfg.checkpoint_config.meta)
+    # if len(cfg.workflow) == 2:
+    #     val_dataset = copy.deepcopy(cfg.data.val)
+    #     val_dataset.pipeline = cfg.data.train.pipeline
+    #     datasets.append(build_dataset(val_dataset))
+    # if cfg.checkpoint_config is not None:
+    #     # save mmseg version, config file content and class names in
+    #     # checkpoints as meta data
+    #     cfg.checkpoint_config.meta = dict(
+    #         mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
+    #         config=cfg.pretty_text,
+    #         CLASSES=datasets[0].CLASSES,
+    #         PALETTE=datasets[0].PALETTE)
+    # # add an attribute for visualization convenience
+    # model.CLASSES = datasets[0].CLASSES
+    # # passing checkpoint meta for saving best checkpoint
+    # meta.update(cfg.checkpoint_config.meta)
     
-    """ PART 2. Training """
-    train_segmentor(
-        model,
-        datasets,
-        cfg,
-        distributed=distributed,
-        validate=(not args.no_validate),
-        timestamp=timestamp,
-        meta=meta)
+    # """ PART 2. Training """
+    # train_segmentor(
+    #     model,
+    #     datasets,
+    #     cfg,
+    #     distributed=distributed,
+    #     validate=(not args.no_validate),
+    #     timestamp=timestamp,
+    #     meta=meta)
 
 
 if __name__ == '__main__':
