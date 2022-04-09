@@ -1,7 +1,11 @@
 import numpy as np
 import warnings
+from functools import wraps
 from torch import Tensor
 from collections.abc import Sequence
+from scipy.stats import entropy
+
+from baseline_dev.active.heuristics.utils import to_prob
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),
@@ -10,6 +14,20 @@ available_reductions = {
     "sum": lambda x: np.sum(x, axis=tuple(range(1, x.ndim))),
     "none": lambda x: x,
 }
+
+""" Some helpful wrappers """
+
+def require_probs(fn):
+    """
+    Wrapper function to convert logits to probabilities
+    """
+    @wraps
+    def wrapper(self, logits):
+        probs = to_prob(logits)
+        return fn(self, probs)
+
+    return wrapper
+
 
 class AbstractHeuristic:
     
@@ -121,12 +139,23 @@ class Random(AbstractHeuristic):
 
     def __init__(
         self, shuffle_prop=1.0, reduction="none", seed=None):
-        super().__init__(shuffle_prop)
+        super().__init__(shuffle_prop=shuffle_prop, reverse=False)
+        # rng = random number generator
         if seed is not None:
             self.rng = np.random.RandomState(seed)
         else:
             self.rng = np.random
 
     def compute_score(self, predictions):
-        # rng = random number generator
         return self.rng.rand(predictions.shape[0])
+
+class Entropy(AbstractHeuristic):
+    """
+    Sort by entropy. The higher, the more uncertain.
+    """
+    def __init__(self, shuffle_prop=0, reduction="none"):
+        super().__init__(shuffle_prop, reverse=True, reduction=reduction)
+
+    @require_probs
+    def compute_score(self, predictions):
+        return entropy(np.swapaxes(predictions, 0, 1))
