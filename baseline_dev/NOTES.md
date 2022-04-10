@@ -36,12 +36,11 @@ Simply append new index on it every time.
 - Inside train_segmentor, we cannot define a static dataloader at the beginning because our we will be modifying the Dataset class (specifically, via appending more indices onto the indices list passed into torchdata.Subset), thus every epoch will need to instantiate a new DataLoader with our updated torchdata.Subset
 
 
-If we want to avoid changes in MMCV, we might have to: for every epoch, call `runner.run(<static dataloader>, cfg.workflow)` with the currently-available labeled dataloader; somehow keep the state_dict (might not always need it but need to have this implemented); update the indices of torchdata.Subset and create a corresponding DataLoader; pass this new DataLoader to runner to initiate another epoch.
+Check point 1 <2022.Apr.9th>
+- Extract `model`, `optimizer`, `dataset` based on MMSeg API, but continue the rest of the training with our code (not via `runner.run()` because this involves changing the fundamental files in mmcv.utils.) Some of the cfgs may be ignored for now, such as hooks, cfg.sample_per_gpu and timestamp, but will be added back after the entire Active Learning procedure works. (TODO: Missing train/test_transform, understand predict_on_dataset() call)
 
 
-
-```
-2022-04-09 20:46:12,442 - mmseg - INFO - Config:
+```2022-04-09 20:46:12,442 - mmseg - INFO - Config:
 norm_cfg = dict(type='SyncBN', requires_grad=True)
 model = dict(
     type='EncoderDecoder',
@@ -217,60 +216,7 @@ auto_resume = False
 
 ```
 
-```
-Config keys:
-norm_cfg
-model
-dataset_type
-data_root
-img_norm_cfg
-crop_size
-train_pipeline
-test_pipeline
-data
-log_config
-dist_params
-log_level
-load_from
-resume_from
-workflow
-cudnn_benchmark
-optimizer
-optimizer_config
-lr_config
-runner
-checkpoint_config
-evaluation
-work_dir
-gpu_ids
-auto_resume
-seed
-norm_cfg
-model
-dataset_type
-data_root
-img_norm_cfg
-crop_size
-train_pipeline
-test_pipeline
-data
-log_config
-dist_params
-log_level
-load_from
-resume_from
-workflow
-cudnn_benchmark
-optimizer
-optimizer_config
-lr_config
-runner
-checkpoint_config
-evaluation
-work_dir
-gpu_ids
-auto_resume
-seed
+```Config keys:
 norm_cfg
 model
 dataset_type

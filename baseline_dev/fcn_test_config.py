@@ -15,4 +15,7 @@ active_learning = dict(
     initial_pool=100,
     query_size=100,
     heuristic="random",
+    shuffle_prop=0.0, 
+    iterations=20,
+    learning_epoch=20,
     )

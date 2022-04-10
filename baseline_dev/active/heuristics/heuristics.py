@@ -15,6 +15,11 @@ available_reductions = {
     "none": lambda x: x,
 }
 
+def _shuffle_subset(data: np.ndarray, shuffle_prop: float) -> np.ndarray:
+    to_shuffle = np.nonzero(np.random.rand(data.shape[0]) < shuffle_prop)[0]
+    data[to_shuffle, ...] = data[np.random.permutation(to_shuffle), ...]
+    return data
+
 """ Some helpful wrappers """
 
 def require_probs(fn):

@@ -198,6 +198,7 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
+    # FIXME: Enable distributed training later.
     # SyncBN is not support for DP
     # if not distributed:
     #     warnings.warn(
@@ -206,7 +207,7 @@ def main():
     #         'avoid this error.')
     #     model = revert_sync_batchnorm(model)
 
-    # log the model summary. temporarily commented out since it's taking space.
+    # log the model summary. temporarily commented out since it's taking up space.
     # logger.info(model)
 
     """ PART 2. Dataset >> to be edited with Active Learning settings """
@@ -231,9 +232,7 @@ def main():
     # # passing checkpoint meta for saving best checkpoint
     # meta.update(cfg.checkpoint_config.meta)
 
-    # """ PART 2. Training >> to be edited with AL settings. """
-    # # Apply a wrapper class, for example: 
-    # # model = ModelWrapper(model=model, criterion=nn.CrossEntropyLoss())
+    """ PART 2. Training >> to be edited with AL settings. """
     train_al_segmentor(
         model, # model is of type torch.nn.Module
         dataset,
@@ -241,7 +240,8 @@ def main():
         distributed=distributed,
         validate=(not args.no_validate),
         timestamp=timestamp,
-        meta=meta)
+        meta=meta, 
+        logger=logger)
 
 
 if __name__ == '__main__':

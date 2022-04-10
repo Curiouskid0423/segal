@@ -3,11 +3,12 @@ Should contain ActiveLearningLoop compatible to MMSeg. This should work like
 any step() methods such as StepLR or optimizer()
 Code mostly similar to BAAL.
 """
-from dataset import ActiveLearningDataset
 from typing import Callable
-from heuristics import AbstractHeuristic, Random
 import numpy as np
 import torch.utils.data as torchdata
+
+from .heuristics import AbstractHeuristic, Random
+from .dataset import ActiveLearningDataset
 
 class ActiveLearningLoop:
 
