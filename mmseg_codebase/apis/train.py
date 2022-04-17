@@ -144,6 +144,7 @@ def train_segmentor(
             dist=distributed,
             shuffle=False)
         eval_cfg = cfg.get('evaluation', {})
+        # Switch runner
         eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
         eval_hook = DistEvalHook if distributed else EvalHook
         # In this PR (https://github.com/open-mmlab/mmcv/pull/1193), the
@@ -175,7 +176,10 @@ def train_segmentor(
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
 
-    runner.run(data_loaders, cfg.workflow)
+    # runner.run(data_loaders, cfg.workflow)
+    loader_cfg = (cfg.seed, cfg.gpu_ids, cfg.data)
+    runner.run(data_loaders, cfg.workflow, cfg.active_learning, loader_cfg)
+
 
 
 ##### Edit 2022.04.07 #####

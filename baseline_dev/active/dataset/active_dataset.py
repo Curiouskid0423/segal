@@ -57,8 +57,8 @@ class ActiveLearningDataset(OracleDataset):
 
     def __getitem__(self, index):
         # index should be relative to the currently available list of indices
-        curr_lst = self.get_indices_for_active_step()[index]
-        return curr_lst[index]
+        index = self.get_indices_for_active_step()[index]
+        return self.dataset[index]
     
     class ActiveIter:
         
@@ -86,7 +86,7 @@ class ActiveLearningDataset(OracleDataset):
     def pool(self):
         """Returns a new Dataset made from unlabelled samples"""
         # Copy the OracleDataset
-        pool_dataset = deepcopy(self._dataset)
+        pool_dataset = deepcopy(self.dataset)
         # Apply test transform
         for attr, value in self.pool_specifics.items():
             if hasattr(pool_dataset, attr):
@@ -137,7 +137,7 @@ class ActiveLearningDataset(OracleDataset):
 
     def get_raw(self, idx: int):
         """Get a datapoint from the underlying dataset."""
-        return self._dataset[idx]
+        return self.dataset[idx]
     
     def state_dict(self):
         """Return the state_dict, ie. the labelled map and random_state."""

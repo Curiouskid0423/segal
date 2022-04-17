@@ -5,7 +5,7 @@ from torch import Tensor
 from collections.abc import Sequence
 from scipy.stats import entropy
 
-from baseline_dev.active.heuristics.utils import to_prob
+from .utils import to_prob
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),

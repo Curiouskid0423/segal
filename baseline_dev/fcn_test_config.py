@@ -1,5 +1,3 @@
-import sys
-
 _base_ = [
     '../configs/_base_/models/fcn_r50-d8.py', '../configs/_base_/datasets/cityscapes.py',
     '../configs/_base_/default_runtime.py', '../configs/_base_/schedules/schedule_40k.py'
@@ -10,12 +8,10 @@ model = dict(
     auxiliary_head=dict(dilation=6)
     )
 
-
 active_learning = dict(
-    initial_pool=100,
-    query_size=100,
-    heuristic="random",
-    shuffle_prop=0.0, 
-    iterations=20,
-    learning_epoch=20,
+    initial_pool=100, query_size=100, heuristic="random",
+    shuffle_prop=0.0, iterations=20, learning_epoch=1,
     )
+workflow = [('train', 1)]
+# Customized learner
+runner = dict(type='ActiveLearningRunner', max_epochs=10, max_iters=None)

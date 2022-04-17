@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from copy import deepcopy
 from typing import Callable, Optional
 
+import mmcv
 import numpy as np
 import torch
 from torch.optim import Optimizer
@@ -35,12 +36,15 @@ class ModelWrapper:
         criterion (Callable): A loss function.
     """
 
-    def __init__(self, model, criterion, logger):
+    def __init__(self, model, criterion=None, logger=None):
         self.model = model
         self.criterion = criterion
+        assert logger is not None, "logger argument should be provided"
         self.logger = logger    # Use the same logger as the main file (MMSeg API)
         self.metrics = dict()   # Could have many metrics, not just train / test loss
         self.add_metric("loss", lambda: Loss())
+        # MMCV compatibility
+        self._version = mmcv.__version__
 
     def add_metric(self, name: str, initializer: Callable):
         """
@@ -104,19 +108,32 @@ class ModelWrapper:
         """
         self.train()
         history = []
-        self.logger.info("Starting training", epoch=epoch, dataset=len(dataset))
+        self.logger.info(f"Starting training epoch={epoch}, dataset size={len(dataset)}")
+        # Need to use mmcv's collate function if the Dataset holds DataContainer instead of tensor.
         collate_fn = collate_fn or default_collate
+        verbose = True
 
         for _ in range(epoch):
             self.reset_metrics("train")
-            for data, target in DataLoader(
+            loader = DataLoader(
                 dataset, batch_size, True, num_workers=workers, collate_fn=collate_fn
-            ):
-                _ = self.train_on_batch(data, target, optimizer, use_cuda, regularizer)
+            )
+            if verbose:
+                loader = tqdm(loader, total=len(loader), file=sys.stdout)
+            for batch in loader:
+                if len(batch) == 2:
+                    data, target = batch
+                    img_metas = None
+                else:
+                    img_metas = batch['img_metas']
+                    data = torch.cat([item for item in batch['img'].data], dim=0)
+                    target = torch.cat([item for item in batch['gt_semantic_seg'].data], dim=0)
+                _ = self.train_on_batch(
+                    data, target, optimizer, use_cuda, regularizer, img_metas=img_metas)
             history.append(self.metrics["train_loss"].value)
 
         optimizer.zero_grad() 
-        self.logger.info("Training complete", train_loss=self.metrics["train_loss"].value)
+        self.logger.info(f"Training complete, train_loss={self.metrics['train_loss'].value}")
         return history
 
     def test_on_dataset(
@@ -140,17 +157,26 @@ class ModelWrapper:
             Average loss value over the dataset.
         """
         self.eval()
-        self.logger.info("Starting evaluating", dataset=len(dataset))
+        verbose = True
+        self.logger.info(f"Starting evaluating, dataset size={len(dataset)}")
         self.reset_metrics("test")
+        
+        collate_fn = collate_fn or default_collate
 
-        for data, target in DataLoader(
+        loader = DataLoader(
             dataset, batch_size, False, num_workers=workers, collate_fn=collate_fn
-        ):
+        )
+        if verbose:
+            tqdm(loader, total=len(loader), file=sys.stdout)
+        for batch in loader:
+            img_metas = batch['img_metas']
+            data = torch.cat([item for item in batch['img'].data], dim=0)
+            target = torch.cat([item for item in batch['gt_semantic_seg'].data], dim=0)
             _ = self.test_on_batch(
-                data, target, cuda=use_cuda, average_predictions=average_predictions
+                data, target, cuda=use_cuda, average_predictions=average_predictions, img_metas=img_metas
             )
 
-        self.logger.info("Evaluation complete", test_loss=self.metrics["test_loss"].value)
+        self.logger.info(f"Evaluation complete, test_loss={self.metrics['test_loss'].value}")
         return self.metrics["test_loss"].value
 
     def train_and_test_on_datasets(
@@ -234,7 +260,7 @@ class ModelWrapper:
         if len(dataset) == 0:
             return None
 
-        self.logger.info("Start Predict", dataset=len(dataset))
+        self.logger.info(f"Start Predict, dataset size = {len(dataset)}")
         collate_fn = collate_fn or default_collate
 
         loader = DataLoader(dataset, batch_size, False, num_workers=workers, collate_fn=collate_fn)
@@ -242,9 +268,14 @@ class ModelWrapper:
         if verbose:
             loader = tqdm(loader, total=len(loader), file=sys.stdout)
         
-        for idx, (data, _) in enumerate(loader):
-
-            pred = self.predict_on_batch(data, iterations, use_cuda)
+        for idx, batch in enumerate(loader):
+            if len(batch) == 2:
+                (data, _) = batch
+                img_metas = None
+            else:
+                img_metas = batch['img_metas']
+                data = torch.cat([item for item in batch['img'].data], dim=0)
+            pred = self.predict_on_batch(data, iterations, use_cuda, img_metas=img_metas)
             pred = map_on_tensor(lambda x: x.detach(), pred)
             if half:
                 pred = map_on_tensor(lambda x: x.half(), pred)
@@ -293,7 +324,9 @@ class ModelWrapper:
         return [np.vstack(pr) for pr in zip(*preds)]
 
     def train_on_batch(
-        self, data, target, optimizer, cuda=False, regularizer: Optional[Callable] = None
+        self, data, target, optimizer, cuda=False, 
+        regularizer: Optional[Callable] = None,
+        img_metas=None,
     ):
         """
         Train the current model on a batch using `optimizer`.
@@ -313,21 +346,31 @@ class ModelWrapper:
         if cuda:
             data, target = data.cuda(), target.cuda()
         optimizer.zero_grad()
-        output = self.model(data)
-        loss = self.criterion(output, target)
+        """ PyTorch forward() """
+        # output = self.model(data) 
+        """ MMCV forward() """
+        mm_data_batch = {
+            'img': data, 'img_metas': img_metas, 'gt_semantic_seg': target,
+        }
+        outputs = self.model.train_step(mm_data_batch, None)
+        loss = outputs['loss']
+
+        """ PyTorch loss """
 
         if regularizer:
             regularized_loss = loss + regularizer()
             regularized_loss.backward()
         else:
+            # FIXME: Check if the computation graph is actually working
             loss.backward()
 
         optimizer.step()
-        self.update_metrics(output, target, loss, filter="train")
+        # FIXME: `update_metrics` might not work for metric other than losses
+        self.update_metrics(outputs, target, loss, filter="train")
         return loss
 
     def test_on_batch(
-        self, data, target, cuda = False, average_predictions = 1,
+        self, data, target, cuda = False, average_predictions = 1, img_metas=None
     ):
         """
         Test the current model on a batch.
@@ -345,16 +388,23 @@ class ModelWrapper:
         with torch.no_grad():
             if cuda:
                 data, target = data.cuda(), target.cuda()
-
-            preds = map_on_tensor(
-                lambda p: p.mean(-1),
-                self.predict_on_batch(data, iterations=average_predictions, cuda=cuda),
-            )
-            loss = self.criterion(preds, target)
-            self.update_metrics(preds, target, loss, "test")
+            """ Original implementation """
+            # preds = map_on_tensor(
+            #     lambda p: p.mean(-1),
+            #     self.predict_on_batch(data, iterations=average_predictions, cuda=cuda),
+            # )
+            # loss = self.criterion(preds, target)
+            # self.update_metrics(preds, target, loss, "test")
+            """ MMCV implementation """
+            mm_data_batch = {
+                'img': data, 'img_metas': img_metas, 'gt_semantic_seg': target,
+            }
+            outputs = self.model.val_step(mm_data_batch, None)
+            loss = outputs['loss']
+            
             return loss
 
-    def predict_on_batch(self, data, iterations=1, cuda=False):
+    def predict_on_batch(self, data, iterations=1, cuda=False, img_metas=None):
         """
         Get the model's prediction on a batch.
 
@@ -373,7 +423,14 @@ class ModelWrapper:
                 data = data.cuda()
             data = map_on_tensor(lambda d: stack_in_memory(d, iterations), data)
             try:
-                out = self.model(data)
+                """ PyTorch version of forward() """
+                # out = self.model(data)
+                """ MMCV version """
+                # FIXME: img_list is having different length from img_meta_list
+                img_list = [img[None, :] for img in data]
+                img_meta_list = [[img_meta] for img_meta in img_metas.data]
+                # outputs = self.model(img_list, img_meta_list, return_loss=False)
+                
             except RuntimeError as e:
                 raise RuntimeError(
                     """CUDA ran out of memory while BaaL tried to replicate data. See the exception above.
@@ -382,7 +439,7 @@ class ModelWrapper:
                 ) from e
             out = map_on_tensor(lambda o: o.view([iterations, -1, *o.size()[1:]]), out)
             out = map_on_tensor(lambda o: o.permute(1, 2, *range(3, o.ndimension()), 0), out)
-
+            
             return out
 
     def get_params(self):

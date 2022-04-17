@@ -20,7 +20,7 @@ from mmcv.runner import get_dist_info, init_dist
 from mmcv.utils import Config, DictAction, get_git_hash
 """ MMSegmentation """
 from mmseg import __version__
-from mmseg.apis import init_random_seed, set_random_seed
+from mmseg.apis import init_random_seed, set_random_seed, train_segmentor
 from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
@@ -200,48 +200,62 @@ def main():
 
     # FIXME: Enable distributed training later.
     # SyncBN is not support for DP
-    # if not distributed:
-    #     warnings.warn(
-    #         'SyncBN is only supported with DDP. To be compatible with DP, '
-    #         'we convert SyncBN to BN. Please use dist_train.sh which can '
-    #         'avoid this error.')
-    #     model = revert_sync_batchnorm(model)
+    if not distributed:
+        warnings.warn(
+            'SyncBN is only supported with DDP. To be compatible with DP, '
+            'we convert SyncBN to BN. Please use dist_train.sh which can '
+            'avoid this error.')
+        model = revert_sync_batchnorm(model)
 
     # log the model summary. temporarily commented out since it's taking up space.
     # logger.info(model)
 
     """ PART 2. Dataset >> to be edited with Active Learning settings """
-    # datasets = [build_dataset(cfg.data.train)]
-    dataset = build_dataset(cfg.data.train)
+    datasets = [build_dataset(cfg.data.train)]
+    # dataset = build_dataset(cfg.data.train)
+    
+    if len(cfg.workflow) == 2:
+        val_dataset = copy.deepcopy(cfg.data.val)
+        val_dataset.pipeline = cfg.data.train.pipeline
+        datasets.append(build_dataset(val_dataset))
+        
+    if cfg.checkpoint_config is not None:
+        # save mmseg version, config file content and class names in
+        # checkpoints as meta data
+        cfg.checkpoint_config.meta = dict(
+            mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
+            config=cfg.pretty_text,
+            CLASSES=datasets[0].CLASSES,
+            PALETTE=datasets[0].PALETTE)
 
-
-    # if len(cfg.workflow) == 2:
-    #     val_dataset = copy.deepcopy(cfg.data.val)
-    #     val_dataset.pipeline = cfg.data.train.pipeline
-    #     datasets.append(build_dataset(val_dataset))
-    # if cfg.checkpoint_config is not None:
-    #     # save mmseg version, config file content and class names in
-    #     # checkpoints as meta data
-    #     cfg.checkpoint_config.meta = dict(
-    #         mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
-    #         config=cfg.pretty_text,
-    #         CLASSES=datasets[0].CLASSES,
-    #         PALETTE=datasets[0].PALETTE)
-    # # add an attribute for visualization convenience
-    # model.CLASSES = datasets[0].CLASSES
-    # # passing checkpoint meta for saving best checkpoint
-    # meta.update(cfg.checkpoint_config.meta)
+    # add an attribute for visualization convenience
+    model.CLASSES = datasets[0].CLASSES
+    # passing checkpoint meta for saving best checkpoint
+    meta.update(cfg.checkpoint_config.meta)
 
     """ PART 2. Training >> to be edited with AL settings. """
+    # Analogous to `train_segmentor` in mmseg/api/train.py
+    # NOTE: MMCV segmentor API
+    # train_segmentor(
+    #     model,
+    #     datasets,
+    #     cfg,
+    #     distributed=distributed,
+    #     validate=(not args.no_validate),
+    #     timestamp=timestamp,
+    #     meta=meta)
+    # NOTE: My segmentor code
     train_al_segmentor(
-        model, # model is of type torch.nn.Module
-        dataset,
+        model, 
+        datasets,
         cfg,
         distributed=distributed,
         validate=(not args.no_validate),
         timestamp=timestamp,
         meta=meta, 
         logger=logger)
+
+
 
 
 if __name__ == '__main__':

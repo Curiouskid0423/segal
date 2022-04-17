@@ -54,7 +54,7 @@ class ActiveLearningLoop:
         # `indices` Used in torchdata.Subset
         
         pool = self.dataset.pool
-        assert pool is None, "self.dataset.pool should not be None"
+        assert pool is not None, "self.dataset.pool should not be None"
 
         if len(pool) > 0:
             # Whether max sample size is capped
@@ -66,7 +66,11 @@ class ActiveLearningLoop:
                 indices = np.arange(len(pool))
         
         if len(pool) > 0:
-            probs = self.get_probabilities(pool, **self.kwargs)
+            # Intended code that doesn't yet work 
+            # probs = self.get_probabilities(pool, **self.kwargs)
+            # FIXME: Ad-hoc hack with random number
+            probs = np.random.choice(len(pool), size=len(pool), replace=False)
+
             if probs is not None:
                 ranked, _ = self.heuristic.get_ranks(probs)
                 if indices is not None:
