@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import Callable, Optional
 
 import mmcv
+from mmseg.models.segmentors import EncoderDecoder
 import numpy as np
 import torch
 from torch.optim import Optimizer
@@ -27,7 +28,7 @@ def map_on_tensor(fn, val):
     return fn(val)
 
 
-class ModelWrapper:
+class ModelWrapper(EncoderDecoder):
     """
     Wrapper created to ease the training/testing/loading.
 

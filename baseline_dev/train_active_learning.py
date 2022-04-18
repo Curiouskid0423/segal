@@ -212,7 +212,6 @@ def main():
 
     """ PART 2. Dataset >> to be edited with Active Learning settings """
     datasets = [build_dataset(cfg.data.train)]
-    # dataset = build_dataset(cfg.data.train)
     
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
@@ -235,15 +234,6 @@ def main():
 
     """ PART 2. Training >> to be edited with AL settings. """
     # Analogous to `train_segmentor` in mmseg/api/train.py
-    # NOTE: MMCV segmentor API
-    # train_segmentor(
-    #     model,
-    #     datasets,
-    #     cfg,
-    #     distributed=distributed,
-    #     validate=(not args.no_validate),
-    #     timestamp=timestamp,
-    #     meta=meta)
     # NOTE: My segmentor code
     train_al_segmentor(
         model, 

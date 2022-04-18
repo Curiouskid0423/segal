@@ -35,12 +35,10 @@ class ActiveLearningRunner(BaseRunner):
         meta=None, max_iters=None, max_epochs=None):
         super().__init__(model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
-    def init_active(self, dataset, cfg):
+    def init_active(self, dataset, cfg, cfg_data, gpu_ids):
         # FIXME: Disabling ModelWrapper functionality
         # self.model = ModelWrapper(self.model, logger=self.logger)
-        # FIXME: Hard-coded. Should be fixed to distributed training setting
-        batch_size = 4
-
+        batch_size = cfg_data.samples_per_gpu * cfg_data.workers_per_gpu * len(gpu_ids)
         heuristic = get_heuristics(
             cfg['heuristic'], 
             cfg['shuffle_prop'],
@@ -127,7 +125,7 @@ class ActiveLearningRunner(BaseRunner):
             mode, _ = flow 
             if mode == 'train':
                 active_sets[i] = ActiveLearningDataset(datasets[i], pool_specifics=None)
-                self.init_active(dataset=active_sets[i], cfg=al_cfg)
+                self.init_active(dataset=active_sets[i], cfg=al_cfg, cfg_data=cfg_data, gpu_ids=gpu_ids)
                 active_sets[i].label_randomly(al_cfg.initial_pool)
                 self.logger.info(f"ActiveLearningDataset created with initial pool of {al_cfg.initial_pool}.")
                 has_train_set = True
@@ -136,15 +134,12 @@ class ActiveLearningRunner(BaseRunner):
             """ Active Learning assumes training mode enabled.
                 Please provide a training set."""
 
-        # FIXME: This block will show the wrong max_iter number
         for i, flow in enumerate(workflow):
-            # e.g. [ ('train', 1) ('val', 2) ]
             mode, _ = flow 
             if mode == 'train':
                 batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
                 loader_len = len(active_sets[i]) // batch_size
                 self._max_iters = loader_len * self._max_epochs * (self._max_epochs + 1) // 2
-                self.logger.info(f"_max_iters = {self._max_iters}")
                 break
         
         work_dir = self.work_dir if self.work_dir is not None else 'NONE'
@@ -172,10 +167,10 @@ class ActiveLearningRunner(BaseRunner):
 
                 """ for `epochs` epoch, iterate with a static dataloader """
 
-                for epoch in range(epochs):
+                for _ in range(epochs):
                     
                     """ Create loader for active learning dataset """
-                    self.logger.info(f"Epoch {epoch}, {mode} set size: {len(active_sets[i])}")
+                    self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
                     new_loader = build_dataloader(
                         active_sets[i],
                         cfg_data.samples_per_gpu,
@@ -189,9 +184,9 @@ class ActiveLearningRunner(BaseRunner):
                     if mode == 'train' and self.epoch >= self._max_epochs:
                         break
                     epoch_runner(new_loader, **kwargs)
-                if mode == 'train':
+                if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
                     self.active_learning_loop.step()
-                    self.logger.info(f"Sampled new query of size {al_cfg['query_size']}.")
+                    self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")
         
         time.sleep(1)  # wait for some hooks like loggers to finish
         self.call_hook('after_run')

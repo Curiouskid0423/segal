@@ -16,6 +16,7 @@ from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
 from baseline_dev.runner import *
+from baseline_dev.hooks import *
 # from mmcv.parallel.collate import collate as mmcv_collate_fn
 
 def train_al_segmentor(model,
