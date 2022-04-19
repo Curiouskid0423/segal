@@ -28,19 +28,11 @@ def train_al_segmentor(model,
                     meta=None,
                     logger=None):
 
-    """
-    - dataset (ActiveLearningDataset)
-    - model (should be compatible / equivalent to nn.Module)
-    
-    Plan
-    - Follow active learning steps in BAAL
-    """
-    
     # NOTE: Runner-based implementation
     
     logger = get_root_logger(cfg.log_level)
 
-    """Put models onto GPUs"""
+    """Put model onto GPUs"""
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in
@@ -132,7 +124,7 @@ def train_al_segmentor(model,
     loader_cfg = (cfg.seed, cfg.gpu_ids, cfg.data)
     runner.run(datasets, cfg.workflow, cfg.active_learning, loader_cfg)
 
-
+    ######################################################################
     # NOTE: V1 implementation from scratch
     # if logger is None:
     #     logger = get_root_logger(cfg.log_level)

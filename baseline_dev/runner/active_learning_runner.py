@@ -35,18 +35,25 @@ class ActiveLearningRunner(BaseRunner):
         meta=None, max_iters=None, max_epochs=None):
         super().__init__(model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
-    def init_active(self, dataset, cfg, cfg_data, gpu_ids):
-        # FIXME: Disabling ModelWrapper functionality
-        # self.model = ModelWrapper(self.model, logger=self.logger)
+    def init_active(self, dataset, cfg, cfg_data, gpu_ids, seed=None):
+        
+        self.wrapper = ModelWrapper(
+            self.model, logger=self.logger, cfg={
+                'data': cfg_data, 
+                'al': cfg, 
+                'gpu_ids': gpu_ids, 
+                'seed': seed,
+                }
+            )
         batch_size = cfg_data.samples_per_gpu * cfg_data.workers_per_gpu * len(gpu_ids)
         heuristic = get_heuristics(
             cfg['heuristic'], 
             cfg['shuffle_prop'],
             )
+
         self.active_learning_loop = ActiveLearningLoop(
             dataset=dataset, 
-            # FIXME: Use inference_segmentor later
-            get_probabilities=None, 
+            get_probabilities=self.wrapper.predict_on_dataset, 
             heuristic=heuristic,
             query_size=cfg['query_size'],
             batch_size=batch_size,  
@@ -125,7 +132,8 @@ class ActiveLearningRunner(BaseRunner):
             mode, _ = flow 
             if mode == 'train':
                 active_sets[i] = ActiveLearningDataset(datasets[i], pool_specifics=None)
-                self.init_active(dataset=active_sets[i], cfg=al_cfg, cfg_data=cfg_data, gpu_ids=gpu_ids)
+                self.init_active(
+                    dataset=active_sets[i], cfg=al_cfg, cfg_data=cfg_data, gpu_ids=gpu_ids, seed=seed)
                 active_sets[i].label_randomly(al_cfg.initial_pool)
                 self.logger.info(f"ActiveLearningDataset created with initial pool of {al_cfg.initial_pool}.")
                 has_train_set = True
@@ -185,7 +193,8 @@ class ActiveLearningRunner(BaseRunner):
                         break
                     epoch_runner(new_loader, **kwargs)
                 if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
-                    self.active_learning_loop.step()
+                    if not self.active_learning_loop.step():
+                        return 
                     self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")
         
         time.sleep(1)  # wait for some hooks like loggers to finish

@@ -152,6 +152,7 @@ class Random(AbstractHeuristic):
             self.rng = np.random
 
     def compute_score(self, predictions):
+        predictions = np.array([0 for _ in range(len(predictions))])
         return self.rng.rand(predictions.shape[0])
 
 class Entropy(AbstractHeuristic):

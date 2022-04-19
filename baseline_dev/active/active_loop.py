@@ -66,10 +66,8 @@ class ActiveLearningLoop:
                 indices = np.arange(len(pool))
         
         if len(pool) > 0:
-            # Intended code that doesn't yet work 
-            # probs = self.get_probabilities(pool, **self.kwargs)
-            # FIXME: Ad-hoc hack with random number
-            probs = np.random.choice(len(pool), size=len(pool), replace=False)
+        
+            probs = self.get_probabilities(pool, **self.kwargs)
 
             if probs is not None:
                 ranked, _ = self.heuristic.get_ranks(probs)
