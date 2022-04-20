@@ -6,6 +6,8 @@ Code mostly similar to BAAL.
 from typing import Callable
 import numpy as np
 import torch.utils.data as torchdata
+import mmcv
+from mmcv.runner import get_dist_info
 
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
@@ -41,6 +43,11 @@ class ActiveLearningLoop:
         self.heuristic = heuristic
         self.dataset = dataset 
         self.max_sample = max_sample
+        """ 
+        An ad-hoc fix to out-of-cpu-memory issue 
+        Storing 500 segmentation map per time maximally
+        """
+        self.mem_bound = len(dataset) // 500
         self.kwargs = kwargs
 
     def step(self, pool=None) -> bool:
@@ -52,7 +59,6 @@ class ActiveLearningLoop:
         """
 
         # `indices` Used in torchdata.Subset
-        
         pool = self.dataset.pool
         assert pool is not None, "self.dataset.pool should not be None"
 
@@ -67,11 +73,33 @@ class ActiveLearningLoop:
         
         if len(pool) > 0:
         
-            probs = self.get_probabilities(pool, **self.kwargs)
+            N = len(pool) // self.mem_bound
 
-            if probs is not None:
-                ranked, _ = self.heuristic.get_ranks(probs)
+            uncertainty_scores = []
+
+            rank, world_size = get_dist_info()
+            if rank == 0:
+                prog_bar = mmcv.ProgressBar(len(pool))
+
+            for i in range(0, len(pool), N):
+                # Get logits from segmentation map; 
+                # dim: (batch_size, 19 classes, img_H, img_W);
+                end = i+N if i+N < len(pool) else len(pool)
+                subset = torchdata.Subset(pool, range(i, end))
+                partial_prob = self.get_probabilities(subset, **self.kwargs)
+                if partial_prob is not None:
+                    scores = self.heuristic.get_uncertainties(partial_prob)
+                    uncertainty_scores.append(scores)
+                
+                # rank 0 worker will collect progress from all workers.
+                if rank == 0:
+                    for _ in range(end-i):
+                        prog_bar.update()
+
+            ranked = self.heuristic.reorder_indices(uncertainty_scores)
+            if uncertainty_scores != []:
                 if indices is not None:
+                    # use the values in `ranked` to reorder `indices`
                     ranked = indices[np.array(ranked)]
                 if len(ranked) > 0:
                     self.dataset.label(ranked[:self.query_size])

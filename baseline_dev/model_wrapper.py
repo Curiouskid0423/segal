@@ -9,8 +9,8 @@ from typing import Callable, Optional
 
 import numpy as np
 import torch
+from mmcv.engine import collect_results_cpu
 from mmseg.datasets import build_dataloader
-from tqdm import tqdm
 # from torch.utils.data.dataloader import default_collate
 
 def map_on_tensor(fn, val):
@@ -36,7 +36,12 @@ class ModelWrapper:
         assert logger is not None, "logger argument should be provided"
         self.logger = logger    
         self.cfg = cfg
-
+        """ 
+        An ad-hoc fix for insufficent memory issue 
+        (can't store all the segmentation map prediction) 
+        """
+        self.mem_bound = 10 
+        
     def predict_on_dataset_generator(
         self, dataset, batch_size, iterations, use_cuda, workers = 4,
         collate_fn: Optional[Callable] = None,
@@ -79,18 +84,31 @@ class ModelWrapper:
             )
 
         results = []
-        self.logger.info(f"Predicting on unlabeled pool. Pool size {len(dataset)}")
-        # FIXME: Use `test_pipeline` config ?
-        # FIXME: Some config params in cfg.active_learning is not used.
-        # for batch in test_loader:
-        #     with torch.no_grad():
-        #         batch['img'] = batch['img'].data # .numpy().tolist()
-        #         batch['img_metas'] = batch['img_metas'].data
-        #         batch.pop('gt_semantic_seg') # delete the ground truth from batch
-        #         outputs = model(return_loss=False, **batch)
-        #     results.extend(outputs)
-        # FIXME: Testing if iterating over test_loader is the source of leaked semaphores.
-        results = [0 for _ in range(len(test_loader))]
+
+        # FIXME: Use `test_pipeline` cfg / Some params in cfg.active_learning is not used;
+        # Refer to `single_gpu_test` and `multi_gpu_test` methods on mmseg/api/test.py;
+        # What is `pre_eval` method / hook ?
+        
+        for batch in test_loader:
+            with torch.no_grad():
+                # batch['img'] = batch['img'].data # .numpy().tolist() / make memorymap?
+                # batch['img_metas'] = batch['img_metas'].data
+
+                batch.pop('gt_semantic_seg') # delete the ground truth from batch
+                ext_img = batch['img'].data[0].cuda()
+                ext_img_meta = batch['img_metas'].data[0]
+                
+                # NOTE Approach 1: This gives pixel-classified result via `cls_seg` call;
+                # outputs = model(return_loss=False, rescale=True, **batch)
+                # NOTE Approach 2: 
+                # Use model.module.inference
+                # NOTE Approach 3
+                # outputs dim: Size([2, 19, 512, 1024]) # 2 is batch_size; 19 classes;
+                outputs = model.module.encode_decode(ext_img, ext_img_meta).cpu()
+
+            for output in outputs:
+                results.append(output.numpy())
+
         return np.array(results)
 
     def get_params(self):

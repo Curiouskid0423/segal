@@ -22,12 +22,6 @@ class ActiveLearningRunner(BaseRunner):
 
     """ 
     Referenced epoch_runner.py file.
-
-    Scenario
-    >>  runner.run(datasets, cfg.workflow)
-        Inside run, every K epochs (hyperparam) we update query_size samples.
-        This can be done by stepping AL_Loop every K epochs. Then change the 
-        DataLoader accordingly. 
     """
 
     def __init__(
@@ -45,6 +39,7 @@ class ActiveLearningRunner(BaseRunner):
                 'seed': seed,
                 }
             )
+        # FIXME: Should batch_size consider workers_per_gpu? Fix this later;
         batch_size = cfg_data.samples_per_gpu * cfg_data.workers_per_gpu * len(gpu_ids)
         heuristic = get_heuristics(
             cfg['heuristic'], 
@@ -57,7 +52,6 @@ class ActiveLearningRunner(BaseRunner):
             heuristic=heuristic,
             query_size=cfg['query_size'],
             batch_size=batch_size,  
-            iterations=cfg["iterations"],
             use_cuda=torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
             )
@@ -174,7 +168,7 @@ class ActiveLearningRunner(BaseRunner):
                             type(mode)))
 
                 """ for `epochs` epoch, iterate with a static dataloader """
-
+                pool_size = -1
                 for _ in range(epochs):
                     
                     """ Create loader for active learning dataset """
@@ -189,10 +183,15 @@ class ActiveLearningRunner(BaseRunner):
                         seed=seed,
                         drop_last=True
                     ) 
-                    if mode == 'train' and self.epoch >= self._max_epochs:
-                        break
+                    if mode == 'train':
+                        pool_size = len(active_sets[i].pool)
+                        if self.epoch >= self._max_epochs:
+                            break
+                    
                     epoch_runner(new_loader, **kwargs)
+
                 if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
+                    self.logger.info(f"Predicting on unlabeled pool. Pool size {pool_size}")
                     if not self.active_learning_loop.step():
                         return 
                     self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")
