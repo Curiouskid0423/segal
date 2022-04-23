@@ -198,7 +198,6 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
-    # FIXME: Enable distributed training later.
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(

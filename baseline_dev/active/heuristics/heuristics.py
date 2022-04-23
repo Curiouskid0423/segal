@@ -1,7 +1,8 @@
 import numpy as np
 import warnings
-from functools import wraps
+import torch
 from torch import Tensor
+import torch.special as S
 from collections.abc import Sequence
 from scipy.stats import entropy
 
@@ -19,19 +20,6 @@ def _shuffle_subset(data: np.ndarray, shuffle_prop: float) -> np.ndarray:
     to_shuffle = np.nonzero(np.random.rand(data.shape[0]) < shuffle_prop)[0]
     data[to_shuffle, ...] = data[np.random.permutation(to_shuffle), ...]
     return data
-
-""" Some helpful wrappers """
-
-def require_probs(fn):
-    """
-    Wrapper function to convert logits to probabilities
-    """
-    @wraps
-    def wrapper(self, logits):
-        probs = to_prob(logits)
-        return fn(self, probs)
-
-    return wrapper
 
 
 class AbstractHeuristic:
@@ -75,16 +63,15 @@ class AbstractHeuristic:
         Return: Array of uncertainties
         """
 
-        if isinstance(predictions, Tensor):
-            predictions = predictions.numpy()
+        # if isinstance(predictions, Tensor):
+        #     predictions = predictions.numpy()
 
         scores = self.compute_score(predictions)
         scores = self.reduction(scores)
-        
-        if not np.all(np.isfinite(scores)):
-            fixed = 0.0 if self.reversed else 10000
-            warnings.warn("Some value in scores vector is infinite.")
-            scores[~np.isfinite(scores)] = fixed
+        # if not np.all(np.isfinite(scores)):
+        #     fixed = 0.0 if self.reversed else 10000
+        #     warnings.warn("Some value in scores vector is infinite.")
+        #     scores[~np.isfinite(scores)] = fixed
 
         return scores
 
@@ -102,7 +89,7 @@ class AbstractHeuristic:
             ValueError if `scores` is not uni-dimensional.
         """
         if isinstance(scores, Sequence):
-            scores = np.concatenate(scores)
+            scores = np.concatenate(scores[:, None])
 
         if scores.ndim > 1:
             raise ValueError(
@@ -152,8 +139,8 @@ class Random(AbstractHeuristic):
             self.rng = np.random
 
     def compute_score(self, predictions):
-        predictions = np.array([0 for _ in range(len(predictions))])
-        return self.rng.rand(predictions.shape[0])
+        assert isinstance(predictions, torch.Tensor), "predictions have to be in Tensor format"
+        return torch.Tensor(self.rng.rand(predictions.size()[0]))
 
 class Entropy(AbstractHeuristic):
     """
@@ -162,6 +149,21 @@ class Entropy(AbstractHeuristic):
     def __init__(self, shuffle_prop=0, reduction="none"):
         super().__init__(shuffle_prop, reverse=True, reduction=reduction)
 
-    @require_probs
+    def segmap_mean_entropy(self, softmax_pred):
+        bs, classes, img_H, img_W = softmax_pred.size()
+        processed = torch.transpose(softmax_pred, 0, 1)
+        flat_probs = processed.reshape(bs, classes, -1)
+        N = img_H * img_W # number of pixels
+        lst_of_entropy = [1./N * S.entr(flat_probs[batch]).sum() for batch in range(bs)]
+        return torch.stack(lst_of_entropy)
+        
+
     def compute_score(self, predictions):
-        return entropy(np.swapaxes(predictions, 0, 1))
+        # Swap axes of `batch size` and `classes`
+        assert isinstance(predictions, Tensor), "entropy calculation would be very slow on CPU"
+        
+        probs = to_prob(predictions)
+        mean_entropy = self.segmap_mean_entropy(probs) #.mean(axis=(-1, -2))[:, None]
+        # print(f"shape of mean_ent: {mean_entropy.size()}")
+        # reshaped = mean_entropy.swapaxes(0, 1)
+        return mean_entropy

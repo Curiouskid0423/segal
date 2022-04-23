@@ -4,6 +4,7 @@ any step() methods such as StepLR or optimizer()
 Code mostly similar to BAAL.
 """
 from typing import Callable
+import torch
 import numpy as np
 import torch.utils.data as torchdata
 import mmcv
@@ -45,9 +46,9 @@ class ActiveLearningLoop:
         self.max_sample = max_sample
         """ 
         An ad-hoc fix to out-of-cpu-memory issue 
-        Storing 500 segmentation map per time maximally
+        - when using 4 GPU, pred_unit = 40 ~ 60
         """
-        self.mem_bound = len(dataset) // 500
+        self.pred_unit = 50
         self.kwargs = kwargs
 
     def step(self, pool=None) -> bool:
@@ -73,35 +74,43 @@ class ActiveLearningLoop:
         
         if len(pool) > 0:
         
-            N = len(pool) // self.mem_bound
+            # uncertainty_scores = []
+            
+            # rank, world_size = get_dist_info()
+            # if rank == 0:
+            #     prog_bar = mmcv.ProgressBar(len(pool))
+            
+            # for i in range(0, len(pool), self.pred_unit):
+            #     # Get logits from segmentation map; 
+            #     # dim: (batch_size, 19 classes, img_H, img_W);
+            #     end = i + self.pred_unit if i + self.pred_unit < len(pool) else len(pool)
+            #     subset = torchdata.Subset(pool, range(i, end))
+            #     partial_prob = self.get_probabilities(subset, **self.kwargs)
+            #     if partial_prob is not None:
+            #         scores = self.heuristic.get_uncertainties(partial_prob).cpu()
+            #         uncertainty_scores.extend(scores)
 
-            uncertainty_scores = []
+            #     if i >= 200:
+            #         break
+
+            #     # rank 0 worker will collect progress from all workers.
+            #     if rank == 0:
+            #         for _ in range(len(subset)):
+            #             prog_bar.update()
+            #  
+            # dim: (batch_size, 19 classes, img_H, img_W);
 
             rank, world_size = get_dist_info()
-            if rank == 0:
-                prog_bar = mmcv.ProgressBar(len(pool))
-
-            for i in range(0, len(pool), N):
-                # Get logits from segmentation map; 
-                # dim: (batch_size, 19 classes, img_H, img_W);
-                end = i+N if i+N < len(pool) else len(pool)
-                subset = torchdata.Subset(pool, range(i, end))
-                partial_prob = self.get_probabilities(subset, **self.kwargs)
-                if partial_prob is not None:
-                    scores = self.heuristic.get_uncertainties(partial_prob)
-                    uncertainty_scores.append(scores)
-                
-                # rank 0 worker will collect progress from all workers.
-                if rank == 0:
-                    for _ in range(end-i):
-                        prog_bar.update()
-
-            ranked = self.heuristic.reorder_indices(uncertainty_scores)
-            if uncertainty_scores != []:
+            uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
+            has_scores = uncertainty_scores is not None and uncertainty_scores != []
+            if rank == 0 and has_scores:
+                ranked = self.heuristic.reorder_indices(uncertainty_scores)
                 if indices is not None:
                     # use the values in `ranked` to reorder `indices`
                     ranked = indices[np.array(ranked)]
+
                 if len(ranked) > 0:
+                    print(f"current device {torch.cuda.current_device()},  labeled data: {ranked[:self.query_size]}")
                     self.dataset.label(ranked[:self.query_size])
                     return True
 

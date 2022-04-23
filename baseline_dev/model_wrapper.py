@@ -9,7 +9,9 @@ from typing import Callable, Optional
 
 import numpy as np
 import torch
-from mmcv.engine import collect_results_cpu
+import mmcv
+from mmcv.runner import get_dist_info
+from mmcv.engine import collect_results_cpu, collect_results_gpu
 from mmseg.datasets import build_dataloader
 # from torch.utils.data.dataloader import default_collate
 
@@ -36,11 +38,6 @@ class ModelWrapper:
         assert logger is not None, "logger argument should be provided"
         self.logger = logger    
         self.cfg = cfg
-        """ 
-        An ad-hoc fix for insufficent memory issue 
-        (can't store all the segmentation map prediction) 
-        """
-        self.mem_bound = 10 
         
     def predict_on_dataset_generator(
         self, dataset, batch_size, iterations, use_cuda, workers = 4,
@@ -69,47 +66,95 @@ class ModelWrapper:
         self.eval()
         pass
 
-    def predict_on_dataset(self, dataset, **kwargs):
+    def predict_on_dataset(self, dataset, heuristic, **kwargs):
         
+        # self.eval()
+        # model = self.backbone
+
+        # test_loader = build_dataloader(
+        #     dataset,
+        #     self.cfg['data'].samples_per_gpu,
+        #     self.cfg['data'].workers_per_gpu,
+        #     shuffle=False,
+        #     num_gpus= 1, #len(self.cfg['gpu_ids']),
+        #     dist=False, #True if len(self.cfg['gpu_ids']) > 1 else False,
+        #     seed=self.cfg['seed'],
+        #     drop_last=True,
+        #     )
+
+        # results = torch.Tensor().cpu()
+
+        # rank, world_size = get_dist_info()
+        # if rank == 0:
+        #     prog_bar = mmcv.ProgressBar(len(dataset))
+
+        # for batch in test_loader:
+        #     with torch.no_grad():
+
+        #         batch.pop('gt_semantic_seg') # delete the ground truth from batch
+        #         ext_img = batch['img'].data[0].cpu() #.cuda()
+        #         ext_img_meta = batch['img_metas'].data[0]
+                
+        #         # NOTE Approach 1: This gives pixel-classified result via `cls_seg` call;
+        #         # outputs = model(return_loss=False, rescale=True, **batch)
+        #         # NOTE Approach 2:
+        #         # outputs dim: Size([2, 19, 512, 1024]) # 2 is batch_size; 19 classes;
+        #         outputs = model.module.encode_decode(ext_img, ext_img_meta) #.cpu()
+                
+        #         scores = heuristic.get_uncertainties(outputs).cpu()
+        #         results = torch.cat((results, scores), dim=0)
+                
+        #     # rank 0 worker will collect progress from all workers.
+        #     if rank == 0:
+        #         completed = outputs.size()[0] * world_size
+        #         for _ in range(completed):
+        #             prog_bar.update()
+            
+        # return results
+
         self.eval()
         model = self.backbone
+
         test_loader = build_dataloader(
             dataset,
             self.cfg['data'].samples_per_gpu,
             self.cfg['data'].workers_per_gpu,
-            len(self.cfg['gpu_ids']),
+            shuffle=False,
+            num_gpus= len(self.cfg['gpu_ids']),
             dist=True if len(self.cfg['gpu_ids']) > 1 else False,
             seed=self.cfg['seed'],
             drop_last=True,
             )
 
+        # results = torch.Tensor()
         results = []
 
-        # FIXME: Use `test_pipeline` cfg / Some params in cfg.active_learning is not used;
-        # Refer to `single_gpu_test` and `multi_gpu_test` methods on mmseg/api/test.py;
-        # What is `pre_eval` method / hook ?
-        
+        rank, world_size = get_dist_info()
+        if rank == 0:
+            prog_bar = mmcv.ProgressBar(len(dataset))
+
         for batch in test_loader:
             with torch.no_grad():
-                # batch['img'] = batch['img'].data # .numpy().tolist() / make memorymap?
-                # batch['img_metas'] = batch['img_metas'].data
 
                 batch.pop('gt_semantic_seg') # delete the ground truth from batch
                 ext_img = batch['img'].data[0].cuda()
                 ext_img_meta = batch['img_metas'].data[0]
+                outputs = model.module.encode_decode(ext_img, ext_img_meta) #.cpu()
                 
-                # NOTE Approach 1: This gives pixel-classified result via `cls_seg` call;
-                # outputs = model(return_loss=False, rescale=True, **batch)
-                # NOTE Approach 2: 
-                # Use model.module.inference
-                # NOTE Approach 3
-                # outputs dim: Size([2, 19, 512, 1024]) # 2 is batch_size; 19 classes;
-                outputs = model.module.encode_decode(ext_img, ext_img_meta).cpu()
-
-            for output in outputs:
-                results.append(output.numpy())
-
-        return np.array(results)
+                scores = heuristic.get_uncertainties(outputs)
+                # results = torch.cat((results, scores), dim=0)
+                results.extend(scores)
+                if len(results) >= 800:
+                    break
+                
+            # rank 0 worker will collect progress from all workers.
+            if rank == 0:
+                completed = outputs.size()[0] * world_size
+                for _ in range(completed):
+                    prog_bar.update()
+        # collect results from all devices
+        all_results = collect_results_gpu(results, size=len(dataset))
+        return np.array(all_results)
 
     def get_params(self):
         """

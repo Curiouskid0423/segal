@@ -39,8 +39,8 @@ class ActiveLearningRunner(BaseRunner):
                 'seed': seed,
                 }
             )
-        # FIXME: Should batch_size consider workers_per_gpu? Fix this later;
-        batch_size = cfg_data.samples_per_gpu * cfg_data.workers_per_gpu * len(gpu_ids)
+        
+        batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
         heuristic = get_heuristics(
             cfg['heuristic'], 
             cfg['shuffle_prop'],
