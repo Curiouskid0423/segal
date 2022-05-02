@@ -90,6 +90,8 @@ class AbstractHeuristic:
         """
         if isinstance(scores, Sequence):
             scores = np.concatenate(scores[:, None])
+        elif isinstance(scores, torch.Tensor):
+            scores = scores.cpu().numpy()
 
         if scores.ndim > 1:
             raise ValueError(
@@ -164,6 +166,5 @@ class Entropy(AbstractHeuristic):
         
         probs = to_prob(predictions)
         mean_entropy = self.segmap_mean_entropy(probs) #.mean(axis=(-1, -2))[:, None]
-        # print(f"shape of mean_ent: {mean_entropy.size()}")
         # reshaped = mean_entropy.swapaxes(0, 1)
         return mean_entropy

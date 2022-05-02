@@ -45,7 +45,7 @@ class ActiveLearningLoop:
         self.dataset = dataset 
         self.max_sample = max_sample
         """ 
-        An ad-hoc fix to out-of-cpu-memory issue 
+        FIXME: An ad-hoc fix to out-of-cpu-memory issue 
         - when using 4 GPU, pred_unit = 40 ~ 60
         """
         self.pred_unit = 50
@@ -61,6 +61,8 @@ class ActiveLearningLoop:
 
         # `indices` Used in torchdata.Subset
         pool = self.dataset.pool
+        print(f"cuda:{torch.cuda.current_device()} inside step() function with pool size of {len(pool)}.")
+            
         assert pool is not None, "self.dataset.pool should not be None"
 
         if len(pool) > 0:
@@ -89,28 +91,23 @@ class ActiveLearningLoop:
             #     if partial_prob is not None:
             #         scores = self.heuristic.get_uncertainties(partial_prob).cpu()
             #         uncertainty_scores.extend(scores)
-
-            #     if i >= 200:
-            #         break
-
             #     # rank 0 worker will collect progress from all workers.
             #     if rank == 0:
             #         for _ in range(len(subset)):
             #             prog_bar.update()
-            #  
-            # dim: (batch_size, 19 classes, img_H, img_W);
 
             rank, world_size = get_dist_info()
             uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
+            # FIXME: Check the line below (has_scores assignment)
             has_scores = uncertainty_scores is not None and uncertainty_scores != []
             if rank == 0 and has_scores:
                 ranked = self.heuristic.reorder_indices(uncertainty_scores)
+                print(f"ranked size: {ranked.shape}")
                 if indices is not None:
                     # use the values in `ranked` to reorder `indices`
                     ranked = indices[np.array(ranked)]
-
                 if len(ranked) > 0:
-                    print(f"current device {torch.cuda.current_device()},  labeled data: {ranked[:self.query_size]}")
+                    print(f"cuda:{torch.cuda.current_device()} is labeling.")
                     self.dataset.label(ranked[:self.query_size])
                     return True
 

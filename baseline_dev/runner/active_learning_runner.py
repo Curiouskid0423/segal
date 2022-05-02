@@ -89,7 +89,7 @@ class ActiveLearningRunner(BaseRunner):
             self.run_iter(data_batch, train_mode=True, **kwargs)
             self.call_hook('after_train_iter')
             self._iter += 1
-
+        
         self.call_hook('after_train_epoch')
         self._epoch += 1
 
@@ -189,11 +189,14 @@ class ActiveLearningRunner(BaseRunner):
                             break
                     
                     epoch_runner(new_loader, **kwargs)
-
+                    
                 if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
                     self.logger.info(f"Predicting on unlabeled pool. Pool size {pool_size}")
                     if not self.active_learning_loop.step():
-                        return 
+                        cid = torch.cuda.current_device()
+                        self.logger.info(f"Warning: `self.active_learning_loop.step()` returned False on cuda:{cid}")
+                        continue
+                    
                     self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")
         
         time.sleep(1)  # wait for some hooks like loggers to finish

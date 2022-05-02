@@ -66,7 +66,7 @@ class ModelWrapper:
         self.eval()
         pass
 
-    def predict_on_dataset(self, dataset, heuristic, **kwargs):
+    def predict_on_dataset(self, dataset, heuristic, tmpdir="./tmpdir/", **kwargs):
         
         # self.eval()
         # model = self.backbone
@@ -113,8 +113,8 @@ class ModelWrapper:
         # return results
 
         self.eval()
-        model = self.backbone
-
+        model =self.backbone
+        
         test_loader = build_dataloader(
             dataset,
             self.cfg['data'].samples_per_gpu,
@@ -135,26 +135,26 @@ class ModelWrapper:
 
         for batch in test_loader:
             with torch.no_grad():
-
                 batch.pop('gt_semantic_seg') # delete the ground truth from batch
                 ext_img = batch['img'].data[0].cuda()
                 ext_img_meta = batch['img_metas'].data[0]
-                outputs = model.module.encode_decode(ext_img, ext_img_meta) #.cpu()
-                
-                scores = heuristic.get_uncertainties(outputs)
+                outputs = model.module.encode_decode(ext_img, ext_img_meta)
+                scores = heuristic.get_uncertainties(outputs).cpu().numpy()
+                # scores = [0] # DEBUG
                 # results = torch.cat((results, scores), dim=0)
                 results.extend(scores)
-                if len(results) >= 800:
-                    break
                 
             # rank 0 worker will collect progress from all workers.
             if rank == 0:
                 completed = outputs.size()[0] * world_size
                 for _ in range(completed):
                     prog_bar.update()
-        # collect results from all devices
+
+        # collect results from all devices (GPU) to cpu directory
         all_results = collect_results_gpu(results, size=len(dataset))
-        return np.array(all_results)
+        if all_results is not None:
+            return np.array(all_results)
+            
 
     def get_params(self):
         """

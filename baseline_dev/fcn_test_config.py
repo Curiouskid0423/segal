@@ -4,29 +4,30 @@ _base_ = [
 ]
 
 log_config = dict(
-    interval=10,
+    interval=5,
     hooks=[
         dict(type='TextLoggerHook'),
-        # dict(
-        #     type='WandbLoggerHookWithVal',
-        #     init_kwargs=dict(
-        #         entity='syn2real',
-        #         project='al_baseline',
-        #         name='fcn_hr18_gpu1_e48_q100x4_random_dev',
-        #     )
-        # )
+        dict(
+            type='WandbLoggerHookWithVal',
+            init_kwargs=dict(
+                entity='syn2real',
+                project='al_baseline',
+                name='fcn_hr18_gpu1_e24_q100x4_random',
+            )
+        )
     ]
 )
+
 # Reference formula(?): num_worker = 4 * num_GPU 
 # data = dict(samples_per_gpu=16, workers_per_gpu=4)    # 1gpu
 # data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu
 
 active_learning = dict(
     initial_pool=100, query_size=100, heuristic="random",
-    shuffle_prop=0.0, query_epoch=1,
+    shuffle_prop=0.0, query_epoch=4,
     )
 workflow = [('train', 1)]
-runner = dict(type='ActiveLearningRunner', max_epochs=48, max_iters=None)
+runner = dict(type='ActiveLearningRunner', max_epochs=24, max_iters=None)
 evaluation = dict(interval=8, by_epoch=True, metric='mIoU', pre_eval=True)
 
 # NOTE: Remember to scale lr based on `query_epoch` and `GPU_NUM`.

@@ -26,8 +26,6 @@ def train_al_segmentor(model,
                     meta=None,
                     logger=None):
 
-    # NOTE: Runner-based implementation
-    
     logger = get_root_logger(cfg.log_level)
 
     """Put model onto GPUs"""
