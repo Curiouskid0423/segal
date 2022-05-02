@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 import torch.special as S
 from collections.abc import Sequence
-from scipy.stats import entropy
+# from scipy.stats import entropy
 
 from .utils import to_prob
 
@@ -134,7 +134,6 @@ class Random(AbstractHeuristic):
     def __init__(
         self, shuffle_prop=1.0, reduction="none", seed=None):
         super().__init__(shuffle_prop=shuffle_prop, reverse=False)
-        # rng = random number generator
         if seed is not None:
             self.rng = np.random.RandomState(seed)
         else:
@@ -156,7 +155,10 @@ class Entropy(AbstractHeuristic):
         processed = torch.transpose(softmax_pred, 0, 1)
         flat_probs = processed.reshape(bs, classes, -1)
         N = img_H * img_W # number of pixels
-        lst_of_entropy = [1./N * S.entr(flat_probs[batch]).sum() for batch in range(bs)]
+
+        # Intentionally took out `1./N` coeff for every entropy term 
+        # to prevent small number instability
+        lst_of_entropy = [S.entr(flat_probs[batch]).sum() for batch in range(bs)]
         return torch.stack(lst_of_entropy)
         
 
@@ -165,6 +167,6 @@ class Entropy(AbstractHeuristic):
         assert isinstance(predictions, Tensor), "entropy calculation would be very slow on CPU"
         
         probs = to_prob(predictions)
-        mean_entropy = self.segmap_mean_entropy(probs) #.mean(axis=(-1, -2))[:, None]
+        mean_entropy = self.segmap_mean_entropy(probs)
         # reshaped = mean_entropy.swapaxes(0, 1)
         return mean_entropy

@@ -44,12 +44,12 @@ class ActiveLearningLoop:
         self.heuristic = heuristic
         self.dataset = dataset 
         self.max_sample = max_sample
+        self.kwargs = kwargs
         """ 
-        FIXME: An ad-hoc fix to out-of-cpu-memory issue 
+        An ad-hoc fix to out-of-cpu-memory issue 
         - when using 4 GPU, pred_unit = 40 ~ 60
         """
-        self.pred_unit = 50
-        self.kwargs = kwargs
+        # self.pred_unit = 50
 
     def step(self, pool=None) -> bool:
         """
@@ -61,7 +61,6 @@ class ActiveLearningLoop:
 
         # `indices` Used in torchdata.Subset
         pool = self.dataset.pool
-        print(f"cuda:{torch.cuda.current_device()} inside step() function with pool size of {len(pool)}.")
             
         assert pool is not None, "self.dataset.pool should not be None"
 
@@ -76,38 +75,17 @@ class ActiveLearningLoop:
         
         if len(pool) > 0:
         
-            # uncertainty_scores = []
-            
-            # rank, world_size = get_dist_info()
-            # if rank == 0:
-            #     prog_bar = mmcv.ProgressBar(len(pool))
-            
-            # for i in range(0, len(pool), self.pred_unit):
-            #     # Get logits from segmentation map; 
-            #     # dim: (batch_size, 19 classes, img_H, img_W);
-            #     end = i + self.pred_unit if i + self.pred_unit < len(pool) else len(pool)
-            #     subset = torchdata.Subset(pool, range(i, end))
-            #     partial_prob = self.get_probabilities(subset, **self.kwargs)
-            #     if partial_prob is not None:
-            #         scores = self.heuristic.get_uncertainties(partial_prob).cpu()
-            #         uncertainty_scores.extend(scores)
-            #     # rank 0 worker will collect progress from all workers.
-            #     if rank == 0:
-            #         for _ in range(len(subset)):
-            #             prog_bar.update()
-
             rank, world_size = get_dist_info()
             uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
-            # FIXME: Check the line below (has_scores assignment)
+            
+            # FIXME: step() doesn't work under multi-GPU setting
             has_scores = uncertainty_scores is not None and uncertainty_scores != []
             if rank == 0 and has_scores:
                 ranked = self.heuristic.reorder_indices(uncertainty_scores)
-                print(f"ranked size: {ranked.shape}")
                 if indices is not None:
-                    # use the values in `ranked` to reorder `indices`
+                    # Use the values in `ranked` to reorder `indices`
                     ranked = indices[np.array(ranked)]
                 if len(ranked) > 0:
-                    print(f"cuda:{torch.cuda.current_device()} is labeling.")
                     self.dataset.label(ranked[:self.query_size])
                     return True
 

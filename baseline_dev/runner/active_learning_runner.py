@@ -4,7 +4,6 @@ import os.path as osp
 import platform
 import shutil
 import torch
-from torch.utils.data import DataLoader
 import mmcv
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, get_host_info, save_checkpoint
@@ -194,7 +193,7 @@ class ActiveLearningRunner(BaseRunner):
                     self.logger.info(f"Predicting on unlabeled pool. Pool size {pool_size}")
                     if not self.active_learning_loop.step():
                         cid = torch.cuda.current_device()
-                        self.logger.info(f"Warning: `self.active_learning_loop.step()` returned False on cuda:{cid}")
+                        self.logger.info(f"DEBUG: `self.active_learning_loop.step()` returned False on cuda:{cid}")
                         continue
                     
                     self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")

@@ -64,53 +64,9 @@ class ModelWrapper:
             Generators [batch_size, n_classes, ..., n_iterations].
         """
         self.eval()
-        pass
+        raise NotImplementedError
 
     def predict_on_dataset(self, dataset, heuristic, tmpdir="./tmpdir/", **kwargs):
-        
-        # self.eval()
-        # model = self.backbone
-
-        # test_loader = build_dataloader(
-        #     dataset,
-        #     self.cfg['data'].samples_per_gpu,
-        #     self.cfg['data'].workers_per_gpu,
-        #     shuffle=False,
-        #     num_gpus= 1, #len(self.cfg['gpu_ids']),
-        #     dist=False, #True if len(self.cfg['gpu_ids']) > 1 else False,
-        #     seed=self.cfg['seed'],
-        #     drop_last=True,
-        #     )
-
-        # results = torch.Tensor().cpu()
-
-        # rank, world_size = get_dist_info()
-        # if rank == 0:
-        #     prog_bar = mmcv.ProgressBar(len(dataset))
-
-        # for batch in test_loader:
-        #     with torch.no_grad():
-
-        #         batch.pop('gt_semantic_seg') # delete the ground truth from batch
-        #         ext_img = batch['img'].data[0].cpu() #.cuda()
-        #         ext_img_meta = batch['img_metas'].data[0]
-                
-        #         # NOTE Approach 1: This gives pixel-classified result via `cls_seg` call;
-        #         # outputs = model(return_loss=False, rescale=True, **batch)
-        #         # NOTE Approach 2:
-        #         # outputs dim: Size([2, 19, 512, 1024]) # 2 is batch_size; 19 classes;
-        #         outputs = model.module.encode_decode(ext_img, ext_img_meta) #.cpu()
-                
-        #         scores = heuristic.get_uncertainties(outputs).cpu()
-        #         results = torch.cat((results, scores), dim=0)
-                
-        #     # rank 0 worker will collect progress from all workers.
-        #     if rank == 0:
-        #         completed = outputs.size()[0] * world_size
-        #         for _ in range(completed):
-        #             prog_bar.update()
-            
-        # return results
 
         self.eval()
         model =self.backbone
@@ -126,7 +82,6 @@ class ModelWrapper:
             drop_last=True,
             )
 
-        # results = torch.Tensor()
         results = []
 
         rank, world_size = get_dist_info()
@@ -140,8 +95,7 @@ class ModelWrapper:
                 ext_img_meta = batch['img_metas'].data[0]
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs).cpu().numpy()
-                # scores = [0] # DEBUG
-                # results = torch.cat((results, scores), dim=0)
+                
                 results.extend(scores)
                 
             # rank 0 worker will collect progress from all workers.
