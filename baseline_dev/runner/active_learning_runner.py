@@ -4,10 +4,9 @@ import os.path as osp
 import platform
 import shutil
 import torch
-from torch.utils.data import DataLoader
 import mmcv
 from mmcv.parallel.collate import collate as mmcv_collate_fn
-from mmcv.runner import BaseRunner, get_host_info, save_checkpoint
+from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
 from mmseg.datasets import build_dataloader
 import time
@@ -35,22 +34,29 @@ class ActiveLearningRunner(BaseRunner):
         meta=None, max_iters=None, max_epochs=None):
         super().__init__(model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
-    def init_active(self, dataset, cfg, cfg_data, gpu_ids):
-        # FIXME: Disabling ModelWrapper functionality
-        # self.model = ModelWrapper(self.model, logger=self.logger)
-        batch_size = cfg_data.samples_per_gpu * cfg_data.workers_per_gpu * len(gpu_ids)
+    def init_active(self, dataset, cfg, cfg_data, gpu_ids, seed=None):
+        
+        self.wrapper = ModelWrapper(
+            self.model, logger = self.logger, cfg={
+                'data': cfg_data, 
+                'al': cfg, 
+                'gpu_ids': gpu_ids, 
+                'seed': seed,
+                }
+        )
+        
+        batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
         heuristic = get_heuristics(
             cfg['heuristic'], 
             cfg['shuffle_prop'],
             )
+
         self.active_learning_loop = ActiveLearningLoop(
             dataset=dataset, 
-            # FIXME: Use inference_segmentor later
-            get_probabilities=None, 
+            get_probabilities=self.wrapper.predict_on_dataset, 
             heuristic=heuristic,
             query_size=cfg['query_size'],
             batch_size=batch_size,  
-            iterations=cfg["iterations"],
             use_cuda=torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
             )
@@ -125,7 +131,13 @@ class ActiveLearningRunner(BaseRunner):
             mode, _ = flow 
             if mode == 'train':
                 active_sets[i] = ActiveLearningDataset(datasets[i], pool_specifics=None)
-                self.init_active(dataset=active_sets[i], cfg=al_cfg, cfg_data=cfg_data, gpu_ids=gpu_ids)
+                self.init_active(
+                        dataset=active_sets[i], 
+                        cfg=al_cfg, 
+                        cfg_data=cfg_data, 
+                        gpu_ids=gpu_ids, 
+                        seed=seed
+                    )
                 active_sets[i].label_randomly(al_cfg.initial_pool)
                 self.logger.info(f"ActiveLearningDataset created with initial pool of {al_cfg.initial_pool}.")
                 has_train_set = True
@@ -166,24 +178,26 @@ class ActiveLearningRunner(BaseRunner):
                             type(mode)))
 
                 """ for `epochs` epoch, iterate with a static dataloader """
+                rank, _ = get_dist_info()
+                self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
+                # self.logger.info(f"list at cuda:{rank}: {np.where(active_sets[i].labelled_map > 0)[0]}")
+
+                new_loader = build_dataloader(
+                    active_sets[i],
+                    cfg_data.samples_per_gpu,
+                    cfg_data.workers_per_gpu,
+                    # cfg.gpus will be ignored if distributed
+                    len(gpu_ids),
+                    dist=True if len(gpu_ids) > 1 else False,
+                    seed=seed,
+                    drop_last=True
+                ) 
 
                 for _ in range(epochs):
-                    
-                    """ Create loader for active learning dataset """
-                    self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-                    new_loader = build_dataloader(
-                        active_sets[i],
-                        cfg_data.samples_per_gpu,
-                        cfg_data.workers_per_gpu,
-                        # cfg.gpus will be ignored if distributed
-                        len(gpu_ids),
-                        dist=True if len(gpu_ids) > 1 else False,
-                        seed=seed,
-                        drop_last=True
-                    ) 
                     if mode == 'train' and self.epoch >= self._max_epochs:
                         break
                     epoch_runner(new_loader, **kwargs)
+
                 if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
                     self.active_learning_loop.step()
                     self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")

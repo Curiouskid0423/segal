@@ -5,6 +5,7 @@ Code mostly similar to BAAL.
 """
 from typing import Callable
 import numpy as np
+import torch
 import torch.utils.data as torchdata
 
 from .heuristics import AbstractHeuristic, Random
@@ -66,17 +67,14 @@ class ActiveLearningLoop:
                 indices = np.arange(len(pool))
         
         if len(pool) > 0:
-            # Intended code that doesn't yet work 
-            # probs = self.get_probabilities(pool, **self.kwargs)
-            # FIXME: Ad-hoc hack with random number
-            probs = np.random.choice(len(pool), size=len(pool), replace=False)
-
-            if probs is not None:
-                ranked, _ = self.heuristic.get_ranks(probs)
+            uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
+            
+            if uncertainty_scores is not None:
+                ranked = self.heuristic.reorder_indices(uncertainty_scores)
                 if indices is not None:
                     ranked = indices[np.array(ranked)]
                 if len(ranked) > 0:
                     self.dataset.label(ranked[:self.query_size])
                     return True
-
+                    
         return False

@@ -1,9 +1,8 @@
 import numpy as np
 import warnings
-from functools import wraps
+import torch
 from torch import Tensor
 from collections.abc import Sequence
-from scipy.stats import entropy
 
 from .utils import to_prob
 
@@ -19,19 +18,6 @@ def _shuffle_subset(data: np.ndarray, shuffle_prop: float) -> np.ndarray:
     to_shuffle = np.nonzero(np.random.rand(data.shape[0]) < shuffle_prop)[0]
     data[to_shuffle, ...] = data[np.random.permutation(to_shuffle), ...]
     return data
-
-""" Some helpful wrappers """
-
-def require_probs(fn):
-    """
-    Wrapper function to convert logits to probabilities
-    """
-    @wraps
-    def wrapper(self, logits):
-        probs = to_prob(logits)
-        return fn(self, probs)
-
-    return wrapper
 
 
 class AbstractHeuristic:
@@ -71,12 +57,9 @@ class AbstractHeuristic:
 
         """ 
         Get the uncertainties.
-        Args:   Array of predictions
+        Args:   Array of predictions (Tensor)
         Return: Array of uncertainties
         """
-
-        if isinstance(predictions, Tensor):
-            predictions = predictions.numpy()
 
         scores = self.compute_score(predictions)
         scores = self.reduction(scores)
@@ -152,6 +135,10 @@ class Random(AbstractHeuristic):
             self.rng = np.random
 
     def compute_score(self, predictions):
+
+        if isinstance(predictions, Tensor):
+            predictions = predictions.cpu().numpy()
+
         return self.rng.rand(predictions.shape[0])
 
 class Entropy(AbstractHeuristic):
@@ -161,6 +148,15 @@ class Entropy(AbstractHeuristic):
     def __init__(self, shuffle_prop=0, reduction="none"):
         super().__init__(shuffle_prop, reverse=True, reduction=reduction)
 
-    @require_probs
+    def segmap_mean_entropy(self, softmax_pred):
+        bs, classes, img_H, img_W = softmax_pred.size()
+        flat_probs = softmax_pred.reshape(bs, -1)
+        N = img_H * img_W # number of pixels
+
+        lst_of_entropy = (-torch.mul(flat_probs, flat_probs.log())).sum(dim=-1) 
+        return lst_of_entropy
+
     def compute_score(self, predictions):
-        return entropy(np.swapaxes(predictions, 0, 1))
+        """ `predictions` have to be a Tensor """
+        probs = to_prob(predictions)
+        return self.segmap_mean_entropy(probs).cpu().numpy()
