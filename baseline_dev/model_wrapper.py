@@ -3,8 +3,8 @@ ModelWrapper to contain an instance attribute of
 type torch.nn.Module that MMSeg can work on. 
 """
 import sys
-from collections.abc import Sequence
 from copy import deepcopy
+from collections.abc import Sequence
 from typing import Callable, Optional
 
 import numpy as np
@@ -69,7 +69,7 @@ class ModelWrapper:
     def predict_on_dataset(self, dataset, heuristic, tmpdir="./tmpdir/", **kwargs):
 
         self.eval()
-        model =self.backbone
+        model = self.backbone
         
         test_loader = build_dataloader(
             dataset,
@@ -79,7 +79,7 @@ class ModelWrapper:
             num_gpus= len(self.cfg['gpu_ids']),
             dist=True if len(self.cfg['gpu_ids']) > 1 else False,
             seed=self.cfg['seed'],
-            drop_last=True,
+            drop_last=False,
             )
 
         results = []
@@ -94,8 +94,7 @@ class ModelWrapper:
                 ext_img = batch['img'].data[0].cuda()
                 ext_img_meta = batch['img_metas'].data[0]
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
-                scores = heuristic.get_uncertainties(outputs).cpu().numpy()
-                
+                scores = heuristic.get_uncertainties(outputs)
                 results.extend(scores)
                 
             # rank 0 worker will collect progress from all workers.
@@ -103,12 +102,12 @@ class ModelWrapper:
                 completed = outputs.size()[0] * world_size
                 for _ in range(completed):
                     prog_bar.update()
-
+        
         # collect results from all devices (GPU) to cpu directory
-        all_results = collect_results_gpu(results, size=len(dataset))
-        if all_results is not None:
-            return np.array(all_results)
-            
+        all_results = collect_results_gpu(results, size=len(dataset)) or []
+        all_results = np.array(all_results)
+        return all_results if len(all_results) > 0 else np.zeros(len(dataset))
+
 
     def get_params(self):
         """

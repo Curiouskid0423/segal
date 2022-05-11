@@ -20,7 +20,7 @@ from mmcv.runner import get_dist_info, init_dist
 from mmcv.utils import Config, DictAction, get_git_hash
 """ MMSegmentation """
 from mmseg import __version__
-from mmseg.apis import init_random_seed, set_random_seed
+from mmseg.apis import init_random_seed, set_random_seed, train_segmentor
 from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
@@ -167,8 +167,8 @@ def main():
     # set multi-process settings
     setup_multi_processes(cfg)
 
-    # init the meta dict to record some important information
-    # such as environment info and seed, which will be logged
+    # init the meta dict to record some important information such as
+    # environment info and seed, which will be logged
     meta = dict()
     # log env info
     env_info_dict = collect_env()
@@ -198,6 +198,7 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
+    # FIXME: Enable distributed training later.
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(
@@ -233,6 +234,7 @@ def main():
 
     """ PART 2. Training >> to be edited with AL settings. """
     # Analogous to `train_segmentor` in mmseg/api/train.py
+    # NOTE: My segmentor code
     train_al_segmentor(
         model, 
         datasets,
@@ -242,6 +244,9 @@ def main():
         timestamp=timestamp,
         meta=meta, 
         logger=logger)
+
+
+
 
 if __name__ == '__main__':
     main()

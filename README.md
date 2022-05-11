@@ -1,5 +1,6 @@
 # Active Learning Baseline System 
 
+- **2022.05.09.** Resolved deadlock issue for distributed training. 
 - **2022.05.02.** Current system works with single GPU training, as well as two heuristics options -- random and mean-entropy. Distributed training mode contains some memory issue within step() function to be fixed.
 
 #### Getting started

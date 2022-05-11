@@ -4,11 +4,9 @@ any step() methods such as StepLR or optimizer()
 Code mostly similar to BAAL.
 """
 from typing import Callable
-import torch
 import numpy as np
+import torch
 import torch.utils.data as torchdata
-import mmcv
-from mmcv.runner import get_dist_info
 
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
@@ -45,11 +43,6 @@ class ActiveLearningLoop:
         self.dataset = dataset 
         self.max_sample = max_sample
         self.kwargs = kwargs
-        """ 
-        An ad-hoc fix to out-of-cpu-memory issue 
-        - when using 4 GPU, pred_unit = 40 ~ 60
-        """
-        # self.pred_unit = 50
 
     def step(self, pool=None) -> bool:
         """
@@ -60,8 +53,8 @@ class ActiveLearningLoop:
         """
 
         # `indices` Used in torchdata.Subset
+        
         pool = self.dataset.pool
-            
         assert pool is not None, "self.dataset.pool should not be None"
 
         if len(pool) > 0:
@@ -74,19 +67,14 @@ class ActiveLearningLoop:
                 indices = np.arange(len(pool))
         
         if len(pool) > 0:
-        
-            rank, world_size = get_dist_info()
             uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
             
-            # FIXME: step() doesn't work under multi-GPU setting
-            has_scores = uncertainty_scores is not None and uncertainty_scores != []
-            if rank == 0 and has_scores:
+            if uncertainty_scores is not None:
                 ranked = self.heuristic.reorder_indices(uncertainty_scores)
                 if indices is not None:
-                    # Use the values in `ranked` to reorder `indices`
                     ranked = indices[np.array(ranked)]
                 if len(ranked) > 0:
                     self.dataset.label(ranked[:self.query_size])
                     return True
-
+                    
         return False

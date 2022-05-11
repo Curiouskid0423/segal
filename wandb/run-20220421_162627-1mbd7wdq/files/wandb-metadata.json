@@ -1,0 +1,31 @@
+{
+    "os": "Linux-5.13.0-19-generic-x86_64-with-glibc2.17",
+    "python": "3.8.12",
+    "heartbeatAt": "2022-04-21T16:26:28.923029",
+    "startedAt": "2022-04-21T16:26:27.797630",
+    "docker": null,
+    "gpu": "NVIDIA TITAN Xp",
+    "gpu_count": 10,
+    "cpu_count": 32,
+    "cuda": null,
+    "args": [
+        "--local_rank=0",
+        "baseline_dev/fcn_test_config.py",
+        "--seed",
+        "0",
+        "--launcher",
+        "pytorch"
+    ],
+    "state": "running",
+    "program": "baseline_dev/train_active_learning.py",
+    "codePath": "baseline_dev/train_active_learning.py",
+    "git": {
+        "remote": "https://github.com/DequanWang/SegAL.git",
+        "commit": "cd589f4948580be80d5c8fb8fea10cc8f910d429"
+    },
+    "email": "yutengli@berkeley.edu",
+    "root": "/home/yutengli/workspace/spring22/al_seg",
+    "host": "windigo",
+    "username": "yutengli",
+    "executable": "/home/yutengli/miniconda3/envs/active/bin/python"
+}

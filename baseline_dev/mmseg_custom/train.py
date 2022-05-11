@@ -4,6 +4,8 @@ Equivalent to mmseg/apis/train.py
 """
 
 import torch 
+from torch.nn import CrossEntropyLoss, DataParallel
+import torch.optim as optim
 import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -26,9 +28,19 @@ def train_al_segmentor(model,
                     meta=None,
                     logger=None):
 
+    """
+    - dataset (ActiveLearningDataset)
+    - model (should be compatible / equivalent to nn.Module)
+    
+    Plan
+    - Follow active learning steps in BAAL
+    """
+    
+    # NOTE: Runner-based implementation
+    
     logger = get_root_logger(cfg.log_level)
 
-    """Put model onto GPUs"""
+    """Put models onto GPUs"""
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in

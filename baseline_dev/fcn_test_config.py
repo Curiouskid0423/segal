@@ -4,17 +4,17 @@ _base_ = [
 ]
 
 log_config = dict(
-    interval=25,
+    interval=10,
     hooks=[
         dict(type='TextLoggerHook'),
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='al_baseline',
-                name='fcn_hr18_gpu1_e32_q100x4_random',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='al_baseline',
+        #         name='fcn_hr18_gpu4_e48_q100x4_entropy_dev',
+        #     )
+        # )
     ]
 )
 
@@ -23,11 +23,13 @@ log_config = dict(
 # data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu
 
 active_learning = dict(
-    initial_pool=100, query_size=100, heuristic="random",
-    shuffle_prop=0.0, query_epoch=4,
+    initial_pool=100, query_size=100, heuristic="entropy",
+    shuffle_prop=0.0, iterations=20, learning_epoch=1,
+    query_epoch=4,
     )
+
 workflow = [('train', 1)]
-runner = dict(type='ActiveLearningRunner', max_epochs=32, max_iters=None)
+runner = dict(type='ActiveLearningRunner', max_epochs=24, max_iters=None)
 checkpoint_config = dict(by_epoch=True, interval=8)
 evaluation = dict(interval=8, by_epoch=True, metric='mIoU', pre_eval=True)
 
