@@ -31,12 +31,7 @@ def train_al_segmentor(model,
     """
     - dataset (ActiveLearningDataset)
     - model (should be compatible / equivalent to nn.Module)
-    
-    Plan
-    - Follow active learning steps in BAAL
     """
-    
-    # NOTE: Runner-based implementation
     
     logger = get_root_logger(cfg.log_level)
 

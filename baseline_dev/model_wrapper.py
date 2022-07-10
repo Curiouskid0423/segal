@@ -70,6 +70,9 @@ class ModelWrapper:
 
         self.eval()
         model = self.backbone
+
+        # NOTE: 
+        # test_loader uses the train-split of dataset with test_pipeline augmentation
         
         test_loader = build_dataloader(
             dataset,
@@ -90,9 +93,8 @@ class ModelWrapper:
 
         for batch in test_loader:
             with torch.no_grad():
-                batch.pop('gt_semantic_seg') # delete the ground truth from batch
-                ext_img = batch['img'].data[0].cuda()
-                ext_img_meta = batch['img_metas'].data[0]
+                ext_img = batch['img'][0].cuda()
+                ext_img_meta = batch['img_metas'][0]
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs)
                 results.extend(scores)

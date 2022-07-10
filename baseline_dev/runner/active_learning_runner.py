@@ -130,7 +130,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, flow in enumerate(workflow):
             mode, _ = flow 
             if mode == 'train':
-                active_sets[i] = ActiveLearningDataset(datasets[i], pool_specifics=None)
+                active_sets[i] = ActiveLearningDataset(datasets[i], cfg_data=cfg_data)
                 self.init_active(
                         dataset=active_sets[i], 
                         cfg=al_cfg, 

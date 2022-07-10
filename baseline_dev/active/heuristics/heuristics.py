@@ -104,10 +104,6 @@ class AbstractHeuristic:
     def get_ranks(self, predictions):
         """
         Rank the predictions according to their uncertainties.
-
-        Args:
-            predictions (ndarray): [batch_size, C, ..., Iterations]
-
         Returns:
             Ranked index according to the uncertainty (highest to lowes).
             Scores for all predictions.

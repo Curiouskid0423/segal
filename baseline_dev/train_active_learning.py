@@ -1,20 +1,19 @@
 """
-To be migrated OUT OF MMSegmentation directory.
-
 This file should perform training the way MMSeg conventionally does,
 but with some Active Learning wrappers that we created.
 """
+
 import argparse
 import copy
 import os
 import os.path as osp
 import time
 import warnings
-
-import mmcv
 import torch
 import torch.distributed as dist
+
 """ MMCV """
+import mmcv
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.runner import get_dist_info, init_dist
 from mmcv.utils import Config, DictAction, get_git_hash
@@ -198,7 +197,6 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
-    # FIXME: Enable distributed training later.
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(
@@ -210,7 +208,7 @@ def main():
     # log the model summary. temporarily commented out since it's taking up space.
     # logger.info(model)
 
-    """ PART 2. Dataset >> to be edited with Active Learning settings """
+    """ PART 2. Dataset """
     datasets = [build_dataset(cfg.data.train)]
     
     if len(cfg.workflow) == 2:
@@ -232,9 +230,7 @@ def main():
     # passing checkpoint meta for saving best checkpoint
     meta.update(cfg.checkpoint_config.meta)
 
-    """ PART 2. Training >> to be edited with AL settings. """
-    # Analogous to `train_segmentor` in mmseg/api/train.py
-    # NOTE: My segmentor code
+    """ PART 3. Training """
     train_al_segmentor(
         model, 
         datasets,

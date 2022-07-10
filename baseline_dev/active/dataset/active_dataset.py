@@ -12,6 +12,7 @@ from typing import Optional, Callable
 import numpy as np
 from copy import deepcopy
 from active.dataset.base import OracleDataset
+from mmseg.datasets import build_dataset
 
 def _identity(x):
     return x
@@ -27,8 +28,8 @@ class ActiveLearningDataset(OracleDataset):
             The function that returns an unlabelled version of a datum so that 
             it can still be used in the DataLoader.
         random_state: Set the random seed for label_randomly().
-        pool_specifics: 
-            Attributes to set when creating the pool. Useful to remove data augmentation.
+        cfg_data: 
+            Config attributes for MMCV dataset.
         last_active_steps: 
             If specified, will iterate over the last_active_steps 
             instead of the full dataset. Useful when doing partial finetuning.
@@ -39,7 +40,7 @@ class ActiveLearningDataset(OracleDataset):
         labelled: Optional[np.ndarray] = None,
         make_unlabelled: Callable = _identity,
         random_state=None,
-        pool_specifics: Optional[dict] = None,
+        cfg_data: Optional[dict] = None,
         last_active_steps: int = -1,
         ):
         
@@ -48,7 +49,13 @@ class ActiveLearningDataset(OracleDataset):
             self.labelled_map = labelled.astype(int)
         else:
             self.labelled_map = np.zeros(len(dataset), dtype=int)
-        self.pool_specifics = {} if pool_specifics is None else pool_specifics
+        
+        """ Reset data augmentation for the unlabelled pool """
+        self.cfg_data = deepcopy(cfg_data)
+        if cfg_data is not None:
+            self.cfg_data['train']['pipeline'] = self.cfg_data['test']['pipeline']
+            self.pool_dataset = build_dataset(self.cfg_data['train'])
+       
         self.make_unlabelled = make_unlabelled
         self.can_label = self.check_can_label()
         # Constructor of OracleDataset
@@ -86,17 +93,11 @@ class ActiveLearningDataset(OracleDataset):
     def pool(self):
         """Returns a new Dataset made from unlabelled samples"""
         # Copy the OracleDataset
-        pool_dataset = deepcopy(self.dataset)
-        # Apply test transform
-        for attr, value in self.pool_specifics.items():
-            if hasattr(pool_dataset, attr):
-                setattr(pool_dataset, attr, value)
-            else:
-                raise ValueError(f"{pool_dataset} doesn't have {attr}")
+        # pool_dataset = deepcopy(self.dataset)
 
         # Exclude the labelled data
         recovered_index = (~self.labelled).nonzero()[0].flatten()
-        pool_dataset = torchdata.Subset(pool_dataset, list(recovered_index))
+        pool_dataset = torchdata.Subset(self.pool_dataset, list(recovered_index))
         res = ActiveLearningPool(pool_dataset, make_unlabelled=self.make_unlabelled)
         return res
 
