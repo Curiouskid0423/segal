@@ -11,8 +11,11 @@ import torch.utils.data as torchdata
 from typing import Optional, Callable
 import numpy as np
 from copy import deepcopy
+
+import mmcv
 from active.dataset.base import OracleDataset
 from mmseg.datasets import build_dataset
+from mmseg.utils import get_root_logger
 
 def _identity(x):
     return x
@@ -20,7 +23,8 @@ def _identity(x):
 class ActiveLearningDataset(OracleDataset):
     """
     Args:
-        dataset: The baseline dataset, type = torchdata.Dataset
+        dataset: 
+            The baseline dataset, type = torchdata.Dataset
         labelled: 
             An array that acts as a mask which is greater than 1 for every data point 
             that is labelled, and 0 for every data point that is not labelled.
@@ -40,17 +44,25 @@ class ActiveLearningDataset(OracleDataset):
         labelled: Optional[np.ndarray] = None,
         make_unlabelled: Callable = _identity,
         random_state=None,
-        cfg_data: Optional[dict] = None,
+        configs: dict = None,
         last_active_steps: int = -1,
         ):
         
-        self.dataset = dataset
+        assert configs is not None, "configs cannot be None"
+        cfg_data = configs['data']
+        self.settings = configs['sample_settings']
+        self.sample_mode = configs['sample_mode']
+        
+        # Initialize labelled pool to be empty
         if labelled is not None:
             self.labelled_map = labelled.astype(int)
         else:
             self.labelled_map = np.zeros(len(dataset), dtype=int)
         
-        """ Reset data augmentation for the unlabelled pool """
+        # Create masks if sample_mode is `pixel`
+        self.dataset = dataset
+
+        # Reset data augmentation for the unlabelled pool (test pipeline) (image-based sampling)
         self.cfg_data = deepcopy(cfg_data)
         if cfg_data is not None:
             self.cfg_data['train']['pipeline'] = self.cfg_data['test']['pipeline']
@@ -58,14 +70,26 @@ class ActiveLearningDataset(OracleDataset):
        
         self.make_unlabelled = make_unlabelled
         self.can_label = self.check_can_label()
+        self.logger = get_root_logger()
+        
         # Constructor of OracleDataset
         super().__init__(self.labelled_map, random_state, last_active_steps)
-
+ 
 
     def __getitem__(self, index):
         # index should be relative to the currently available list of indices
-        index = self.get_indices_for_active_step()[index]
+        index = self.get_indices_for_active_step()[index] 
         return self.dataset[index]
+
+    def image_mask(self, index):
+        """
+        Getter method for masks
+        Since a torch Dataset cannot be mutated after create, use 
+        this method to access the mask of the requested sample
+        """
+        assert self.sample_mode != 'image' and hasattr(self, 'masks')
+        index = self.get_indices_for_active_step()[index]
+        return self.masks[index]
     
     class ActiveIter:
         
@@ -97,6 +121,7 @@ class ActiveLearningDataset(OracleDataset):
 
         # Exclude the labelled data
         recovered_index = (~self.labelled).nonzero()[0].flatten()
+        # Re-create from self.pool_dataset, which has been applied with test transform
         pool_dataset = torchdata.Subset(self.pool_dataset, list(recovered_index))
         res = ActiveLearningPool(pool_dataset, make_unlabelled=self.make_unlabelled)
         return res
@@ -105,6 +130,25 @@ class ActiveLearningDataset(OracleDataset):
         if hasattr(self.dataset, "label") and callable(self.dataset.label):
             return True
         return False
+
+    def label_all_with_mask(self):
+        """ 
+        For pixel-based sampling, all images will be placed in labelled pool initially
+        but only labelled sparsely on randomly selected. 
+        """
+        self.label(list(range(len(self.dataset))))
+
+        gt_shape = self.dataset[0]['gt_semantic_seg'].data.numpy().squeeze().shape
+        h, w = gt_shape
+        N = len(self.dataset)
+        init_pixels = self.settings['initial_label_pixels']
+        assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
+        assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
+        self.logger.info("Creating masks for pixel-based sampling mode")
+        self.masks = [np.random.permutation(h * w).reshape(h, w) < init_pixels for _ in range(N)]
+        self.masks = np.array(self.masks)
+        # self.logger.info(f"first mask looks like: {self.image_mask(index=0)}")
+        # self.logger.info(f"verify first mask pixel count: {np.count_nonzero(self.image_mask(0))}")
 
     def label(self, index, value=None):
         """

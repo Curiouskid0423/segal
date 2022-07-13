@@ -1,6 +1,8 @@
 # Edits during baseline development
 pretrained_ckpts/
+wandb/
 baseline_dev/playground.py
+implementation_draft.txt
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

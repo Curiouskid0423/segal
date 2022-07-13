@@ -5,6 +5,7 @@ import platform
 import shutil
 import torch
 import mmcv
+import numpy as np
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
@@ -34,30 +35,36 @@ class ActiveLearningRunner(BaseRunner):
         meta=None, max_iters=None, max_epochs=None):
         super().__init__(model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
-    def init_active(self, dataset, cfg, cfg_data, gpu_ids, seed=None):
+    def init_active(self, dataset, cfg_al, cfg_data, gpu_ids, seed=None):
         
         self.wrapper = ModelWrapper(
-            self.model, logger = self.logger, cfg={
+            self.model, 
+            cfg = {
                 'data': cfg_data, 
-                'al': cfg, 
+                'al': cfg_al, 
                 'gpu_ids': gpu_ids, 
                 'seed': seed,
                 }
-        )
+            )
         
+        # FIXME: check if this batch_size calculation is correct
         batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
+
+        # FIXME: modify heuristics files based on pixel- or image-based sampling
         heuristic = get_heuristics(
-            cfg['heuristic'], 
-            cfg['shuffle_prop'],
+            mode = cfg_al['sample_mode'],
+            name = cfg_al['heuristic'], 
+            shuffle_prop = cfg_al['shuffle_prop'],
             )
 
+        # FIXME: modify ActiveLearningLoop based on pixel- or image-based sampling
         self.active_learning_loop = ActiveLearningLoop(
-            dataset=dataset, 
-            get_probabilities=self.wrapper.predict_on_dataset, 
-            heuristic=heuristic,
-            query_size=cfg['query_size'],
-            batch_size=batch_size,  
-            use_cuda=torch.cuda.is_available(),
+            dataset = dataset, 
+            get_probabilities = self.wrapper.predict_on_dataset, 
+            heuristic = heuristic,
+            configs = cfg_al,
+            batch_size = batch_size,  
+            use_cuda = torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
             )
 
@@ -88,10 +95,13 @@ class ActiveLearningRunner(BaseRunner):
         # self._max_iters = self._max_epochs * len(self.data_loader)
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
+        # FIXME: modify `data_batch` such that it contains `mask` for each corresponding data pair
         for i, data_batch in enumerate(self.data_loader):
             self._inner_iter = i
             self.call_hook('before_train_iter')
+            # FIXME: modify `run_iter` such that we can apply `mask` to gt_label
             self.run_iter(data_batch, train_mode=True, **kwargs)
+            # print(f"this batch: {data_batch}")
             self.call_hook('after_train_iter')
             self._iter += 1
 
@@ -112,7 +122,7 @@ class ActiveLearningRunner(BaseRunner):
 
         self.call_hook('after_val_epoch')
 
-    def run(self, datasets, workflow, al_cfg, loader_cfg, **kwargs):
+    def run(self, datasets, configs=None, **kwargs):
         
         """
         datasets have to be list (of either one or two datasets typically)
@@ -120,36 +130,63 @@ class ActiveLearningRunner(BaseRunner):
         """
 
         assert isinstance(datasets, list)
+        assert configs != None
+        assert isinstance(configs, dict) and 'workflow' in configs
+
+        # Load config        
+        workflow = configs['workflow']
         assert mmcv.is_list_of(workflow, tuple)
         assert len(datasets) == len(workflow)
         
-        seed, gpu_ids, cfg_data = loader_cfg
-
+        # Deep-copy the dataset to avoid unintentional tampering,
+        # e.g. adding masks to non-training dataset
         active_sets = deepcopy(datasets)
         has_train_set = False
+        sample_mode = configs['al'].sample_mode
+        sample_settings = configs['al'][f'{sample_mode}_based_settings']
+
+        # Set up ActiveLearningDataset instance (for ActiveLearningLoop step thru later)
+        # and label the data in corresponding strategy
         for i, flow in enumerate(workflow):
             mode, _ = flow 
             if mode == 'train':
-                active_sets[i] = ActiveLearningDataset(datasets[i], cfg_data=cfg_data)
+            
+                active_sets[i] = ActiveLearningDataset(
+                    dataset = datasets[i], 
+                    configs = {
+                        'data': configs['data'],
+                        'sample_mode': sample_mode,
+                        'sample_settings': sample_settings
+                    })
                 self.init_active(
-                        dataset=active_sets[i], 
-                        cfg=al_cfg, 
-                        cfg_data=cfg_data, 
-                        gpu_ids=gpu_ids, 
-                        seed=seed
+                        dataset = active_sets[i], 
+                        cfg_al = configs['al'], 
+                        cfg_data = configs['data'], 
+                        gpu_ids = configs['gpu_ids'], 
+                        seed = configs['seed']
                     )
-                active_sets[i].label_randomly(al_cfg.initial_pool)
-                self.logger.info(f"ActiveLearningDataset created with initial pool of {al_cfg.initial_pool}.")
+                if sample_mode == 'image':
+                    active_sets[i].label_randomly(sample_settings['initial_pool'])
+                    self.logger.info(
+                        f"ActiveLearningDataset created with initial pool of {sample_settings['initial_pool']}.")
+                elif sample_mode == 'pixel':
+                    active_sets[i].label_all_with_mask()
+                    self.logger.info(f"in pixel-sampling mode, labelled all images with ignore_index.")
+                    
+                else:
+                    raise ValueError(
+                        "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
                 has_train_set = True
 
         assert has_train_set is True, \
             """ Active Learning assumes training mode enabled.
                 Please provide a training set."""
 
+        # Set up hyperparameters based on the cfg.workflow (modification based on MMSeg codebase)
         for i, flow in enumerate(workflow):
             mode, _ = flow 
             if mode == 'train':
-                batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
+                batch_size = configs['data'].samples_per_gpu * len(configs['gpu_ids'])
                 loader_len = len(active_sets[i]) // batch_size
                 self._max_iters = loader_len * self._max_epochs * (self._max_epochs + 1) // 2
                 break
@@ -163,46 +200,49 @@ class ActiveLearningRunner(BaseRunner):
                          self._max_epochs)
         self.call_hook('before_run')
 
+        return 
+        # Loop through the workflow until hits max_epochs
         while self.epoch < self._max_epochs:
             for i, flow in enumerate(workflow):
                 mode, epochs = flow
                 if isinstance(mode, str):  # self.train()
                     if not hasattr(self, mode):
                         raise ValueError(
-                            f'runner has no method named "{mode}" to run an '
-                            'epoch')
+                            f'runner has no method named "{mode}" to run an epoch')
                     epoch_runner = getattr(self, mode)
                 else:
                     raise TypeError(
-                        'mode in workflow must be a str, but got {}'.format(
-                            type(mode)))
+                        'mode in workflow must be a str, but got {}'.format(type(mode)))
 
-                """ for `epochs` epoch, iterate with a static dataloader """
-                rank, _ = get_dist_info()
+                # For `epochs` epoch, iterate with a static dataloader
                 self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-                # self.logger.info(f"list at cuda:{rank}: {np.where(active_sets[i].labelled_map > 0)[0]}")
 
+                # Build a new dataloader after the ActiveLearningDataset is updated
                 new_loader = build_dataloader(
                     active_sets[i],
-                    cfg_data.samples_per_gpu,
-                    cfg_data.workers_per_gpu,
+                    configs['data'].samples_per_gpu,
+                    configs['data'].workers_per_gpu,
                     # cfg.gpus will be ignored if distributed
-                    len(gpu_ids),
-                    dist=True if len(gpu_ids) > 1 else False,
-                    seed=seed,
-                    drop_last=True
+                    num_gpus = len(configs['gpu_ids']),
+                    dist = True if len(configs['gpu_ids']) > 1 else False,
+                    seed = configs['seed'],
+                    drop_last = True
                 ) 
 
+                # Actual "runner", either train() or val()
                 for _ in range(epochs):
                     if mode == 'train' and self.epoch >= self._max_epochs:
                         break
                     epoch_runner(new_loader, **kwargs)
 
-                if mode == 'train' and (self.epoch % al_cfg['query_epoch'] == 0):
+                # step() if conditions met
+                if mode == 'train' and (self.epoch % configs['al']['query_epoch'] == 0):
                     self.active_learning_loop.step()
-                    self.logger.info(f"Epoch {self.epoch} completed. Sampled new query of size {al_cfg['query_size']}.")
+                    self.logger.info(
+                        f"Epoch {self.epoch} completed. Sampled new query of size {sample_settings['query_size']}.")
         
-        time.sleep(1)  # wait for some hooks like loggers to finish
+        # Wait for some hooks like loggers to finish
+        time.sleep(1)  
         self.call_hook('after_run')
 
     def save_checkpoint(self,

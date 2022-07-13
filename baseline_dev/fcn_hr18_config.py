@@ -18,13 +18,31 @@ log_config = dict(
     ]
 )
 
-# Reference formula: num_worker = 4 * num_GPU 
-# data = dict(samples_per_gpu=16, workers_per_gpu=4)    # 1gpu
-# data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu
-
 active_learning = dict(
-    initial_pool=100, query_size=100, heuristic="entropy",
-    shuffle_prop=0.0, query_epoch=1,
+    sample_mode="pixel",
+    image_based_settings=dict(
+        initial_pool=100, query_size=100
+        ),
+    pixel_based_settings=dict(
+        budget=100, 
+        # budget: the number of pixels sampled from "each" image. 
+        # will sample "evenly" from each image.
+        sample_threshold=5, 
+        # for each image, only sample from top `sample_threshold` percentage
+        query_size=100, 
+        # query size (in pixel) at each step. e.g. 100 pixels at a step
+        sample_evenly=True, # FIXME: Ignored for the current development phase
+        # sampling pixels evenly across each image yields much better results
+        ignore_index=10, 
+        # ignore_index: set ignore_index according to the dataset, e.g.  
+        # cityscapes has 8 classes so any value larger than 8 works
+        initial_label_pixels=100
+        # initial_label_pixels: number of pixels labelled randomly at 
+        # the first epoch (before any sampling)
+        ),
+    heuristic="entropy",
+    query_epoch=1,
+    shuffle_prop=0.0,
     )
 
 workflow = [('train', 1)]
@@ -35,3 +53,7 @@ evaluation = dict(interval=8, by_epoch=True, metric='mIoU', pre_eval=True)
 # FIXME:
 # lr_config = dict(policy='poly', power=0.9**{GPU_NUM / query_epoch}, min_lr=1e-4, by_epoch=True)
 # lr_config = dict(policy='poly', power=0.9, min_lr=1e-4, by_epoch=False)
+
+# Reference formula: num_worker = 4 * num_GPU 
+# data = dict(samples_per_gpu=16, workers_per_gpu=4)    # 1gpu
+# data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu

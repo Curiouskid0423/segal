@@ -12,6 +12,7 @@ import torch
 import mmcv
 from mmcv.runner import get_dist_info
 from mmcv.engine import collect_results_cpu, collect_results_gpu
+from mmseg.utils import get_root_logger
 from mmseg.datasets import build_dataloader
 # from torch.utils.data.dataloader import default_collate
 
@@ -33,10 +34,10 @@ class ModelWrapper:
         criterion (Callable): A loss function.
     """
 
-    def __init__(self, model, logger=None, cfg=None):
+    def __init__(self, model, cfg=None):
         self.backbone = model
-        assert logger is not None, "logger argument should be provided"
-        self.logger = logger    
+        self.logger = get_root_logger()
+        assert cfg is not None, "cfg argument has to be provided for ModelWrapper to be constructed."
         self.cfg = cfg
         
     def predict_on_dataset_generator(

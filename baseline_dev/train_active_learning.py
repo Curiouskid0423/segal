@@ -191,6 +191,13 @@ def main():
     meta['seed'] = seed
     meta['exp_name'] = osp.basename(args.config)
 
+    """ Part 2. Build model """
+    # Set ignore_index, in the case of pixel-based sampling, 
+    # from cfg.active_learning to cfg.model before instantiation
+    if cfg.active_learning.sample_mode == 'pixel':
+        ignore_index = cfg.active_learning.pixel_based_settings.ignore_index
+        setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
+        
     model = build_segmentor(
         cfg.model,
         train_cfg=cfg.get('train_cfg'),
@@ -208,17 +215,17 @@ def main():
     # log the model summary. temporarily commented out since it's taking up space.
     # logger.info(model)
 
-    """ PART 2. Dataset """
+    """ PART 3. Dataset """
     datasets = [build_dataset(cfg.data.train)]
-    
+
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
         val_dataset.pipeline = cfg.data.train.pipeline
         datasets.append(build_dataset(val_dataset))
         
     if cfg.checkpoint_config is not None:
-        # save mmseg version, config file content and class names in
-        # checkpoints as meta data
+        # save mmseg version, config file content and class names 
+        # in checkpoints as meta data
         cfg.checkpoint_config.meta = dict(
             mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
             config=cfg.pretty_text,
@@ -230,7 +237,7 @@ def main():
     # passing checkpoint meta for saving best checkpoint
     meta.update(cfg.checkpoint_config.meta)
 
-    """ PART 3. Training """
+    """ PART 4. Training """
     train_al_segmentor(
         model, 
         datasets,
@@ -238,8 +245,8 @@ def main():
         distributed=distributed,
         validate=(not args.no_validate),
         timestamp=timestamp,
-        meta=meta, 
-        logger=logger)
+        meta=meta
+        )
 
 
 

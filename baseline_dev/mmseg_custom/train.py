@@ -25,8 +25,7 @@ def train_al_segmentor(model,
                     distributed=False,
                     validate=False,
                     timestamp=None,
-                    meta=None,
-                    logger=None):
+                    meta=None):
 
     """
     - dataset (ActiveLearningDataset)
@@ -49,10 +48,9 @@ def train_al_segmentor(model,
         if not torch.cuda.is_available():
             assert digit_version(mmcv.__version__) >= digit_version('1.4.4'), \
                 'Please use MMCV >= 1.4.4 for CPU training!'
-        """ Dev note 2022.04.07
-        - argument `model` is of type nn.Module.
-        - MMDataParallel >> nn.DataParallel
-        """   
+        # Dev note 2022.04.07
+        # - argument `model` is of type nn.Module.
+        # - MMDataParallel >> nn.DataParallel
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
     
     """Set up runner instance and optimizer"""
@@ -82,6 +80,10 @@ def train_al_segmentor(model,
     # an ugly workaround to make the .log and .log.json filenames the same
     runner.timestamp = timestamp
 
+    if cfg.active_learning.sample_mode == 'pixel':
+        pass
+
+    # FIXME: make sure that ignore_index in pixel-sampling works with validation set too
     """Set up eval / validate hooks"""
     if validate:
         val_dataset = build_dataset(cfg.data.val, dict(test_mode=True))
@@ -95,8 +97,6 @@ def train_al_segmentor(model,
         # Switch runner
         eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
         eval_hook = DistEvalHook if distributed else EvalHook
-        # In this PR (https://github.com/open-mmlab/mmcv/pull/1193), the
-        # priority of IterTimerHook has been modified from 'NORMAL' to 'LOW'.
         runner.register_hook(
             eval_hook(val_dataloader, **eval_cfg), priority='LOW')
 
@@ -124,5 +124,12 @@ def train_al_segmentor(model,
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
 
-    loader_cfg = (cfg.seed, cfg.gpu_ids, cfg.data)
-    runner.run(datasets, cfg.workflow, cfg.active_learning, loader_cfg)
+    cfgs = {
+        "seed": cfg.seed,
+        "gpu_ids": cfg.gpu_ids,
+        "data": cfg.data,
+        "workflow": cfg.workflow,
+        "al": cfg.active_learning
+    }
+
+    runner.run(datasets, configs=cfgs)

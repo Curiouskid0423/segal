@@ -33,15 +33,25 @@ class ActiveLearningLoop:
         dataset: ActiveLearningDataset,
         get_probabilities: Callable,
         heuristic: AbstractHeuristic = Random(),
-        query_size: int = 1,
+        configs: dict = {},
         max_sample=-1,
         **kwargs,
     ):
-        self.query_size = query_size
+        if configs['sample_mode'] == 'image':
+            self.settings = configs['image_based_settings']
+        else:
+            self.settings = configs['pixel_based_settings']
+        self.query_size = self.settings['query_size']
+
         self.get_probabilities = get_probabilities
         self.heuristic = heuristic
         self.dataset = dataset 
         self.max_sample = max_sample
+        self.configs = configs # cfg.active_learning dictionary
+        self.sample_mode = configs['sample_mode']
+        assert self.sample_mode in ['pixel', 'image'], "Sample mode needs to be either pixel or image"
+        self.sample_settings = configs[f'{self.sample_mode}_based_settings']
+
         self.kwargs = kwargs
 
     def step(self, pool=None) -> bool:
@@ -66,6 +76,8 @@ class ActiveLearningLoop:
             else:
                 indices = np.arange(len(pool))
         
+        # FIXME: for pixel-based sampling, you don't step thru the pool cuz every image is
+        # technically available in the labelled set, but just sparsely labelled.
         if len(pool) > 0:
             uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
             

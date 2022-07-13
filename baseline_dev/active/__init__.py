@@ -6,7 +6,7 @@ from .active_loop import ActiveLearningLoop
 from .dataset import ActiveLearningDataset
 from . import heuristics
 
-def get_heuristics(name, shuffle_prop=0., reduction="none", **kwargs):
+def get_heuristics(mode, name, shuffle_prop=0., reduction="none", **kwargs):
 
     """
     Args:
@@ -24,5 +24,10 @@ def get_heuristics(name, shuffle_prop=0., reduction="none", **kwargs):
         "entropy": heuristics.Entropy,
     }
 
-    return heuristic_dic[name](shuffle_prop=shuffle_prop, reduction=reduction, **kwargs)
+    assert mode != None, "mode argument has to be either pixel or image for sampling"
+    return heuristic_dic[name](
+        shuffle_prop = shuffle_prop, 
+        reduction = reduction, 
+        **kwargs
+        )
 
