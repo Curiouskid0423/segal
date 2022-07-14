@@ -3,6 +3,7 @@
 import os.path as osp
 import platform
 import shutil
+from regex import R
 import torch
 import mmcv
 import numpy as np
@@ -57,7 +58,6 @@ class ActiveLearningRunner(BaseRunner):
             shuffle_prop = cfg_al['shuffle_prop'],
             )
 
-        # FIXME: modify ActiveLearningLoop based on pixel- or image-based sampling
         self.active_learning_loop = ActiveLearningLoop(
             dataset = dataset, 
             get_probabilities = self.wrapper.predict_on_dataset, 
@@ -71,10 +71,17 @@ class ActiveLearningRunner(BaseRunner):
     def run_iter(self, data_batch, train_mode, **kwargs):
 
         """ Either train, val or custom batch processing """
+            
+        if self.cfg_al['sample_mode'] == 'pixel':
+            data_batch, mask = data_batch
+            ground_truth = data_batch['gt_semantic_seg'].data[0]
+            assert hasattr(self, 'cfg_al')
+            ground_truth.flatten()[~mask.flatten()] = self.cfg_al['pixel_based_settings']['ignore_index']
+            data_batch['gt_semantic_seg'].data[0]._data = ground_truth
+
         if self.batch_processor is not None:
             outputs = self.batch_processor(
                 self.model, data_batch, train_mode=train_mode, **kwargs)
-                
         elif train_mode:
             outputs = self.model.train_step(data_batch, self.optimizer, **kwargs)
         else:
@@ -95,13 +102,16 @@ class ActiveLearningRunner(BaseRunner):
         # self._max_iters = self._max_epochs * len(self.data_loader)
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
-        # FIXME: modify `data_batch` such that it contains `mask` for each corresponding data pair
+        debug_var = False
         for i, data_batch in enumerate(self.data_loader):
+            if not debug_var:
+                true_val_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
+                self.logger.info(
+                    f"debug_var: mask's True value count = {true_val_count}")
+                debug_var = True
             self._inner_iter = i
             self.call_hook('before_train_iter')
-            # FIXME: modify `run_iter` such that we can apply `mask` to gt_label
             self.run_iter(data_batch, train_mode=True, **kwargs)
-            # print(f"this batch: {data_batch}")
             self.call_hook('after_train_iter')
             self._iter += 1
 
@@ -132,7 +142,9 @@ class ActiveLearningRunner(BaseRunner):
         assert isinstance(datasets, list)
         assert configs != None
         assert isinstance(configs, dict) and 'workflow' in configs
-
+        
+        # Save config.active_learning as instance variable for later access
+        self.cfg_al = configs['al']
         # Load config        
         workflow = configs['workflow']
         assert mmcv.is_list_of(workflow, tuple)
@@ -150,7 +162,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, flow in enumerate(workflow):
             mode, _ = flow 
             if mode == 'train':
-            
+
                 active_sets[i] = ActiveLearningDataset(
                     dataset = datasets[i], 
                     configs = {
@@ -171,8 +183,7 @@ class ActiveLearningRunner(BaseRunner):
                         f"ActiveLearningDataset created with initial pool of {sample_settings['initial_pool']}.")
                 elif sample_mode == 'pixel':
                     active_sets[i].label_all_with_mask()
-                    self.logger.info(f"in pixel-sampling mode, labelled all images with ignore_index.")
-                    
+                    self.logger.info(f"In pixel-sampling mode, labelled all images with ignore_index.")
                 else:
                     raise ValueError(
                         "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
@@ -199,8 +210,7 @@ class ActiveLearningRunner(BaseRunner):
         self.logger.info('workflow: %s, max: %d epochs', workflow,
                          self._max_epochs)
         self.call_hook('before_run')
-
-        return 
+        
         # Loop through the workflow until hits max_epochs
         while self.epoch < self._max_epochs:
             for i, flow in enumerate(workflow):
@@ -215,9 +225,13 @@ class ActiveLearningRunner(BaseRunner):
                         'mode in workflow must be a str, but got {}'.format(type(mode)))
 
                 # For `epochs` epoch, iterate with a static dataloader
-                self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-
+                if sample_mode == 'image':
+                    self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
+                elif sample_mode == 'pixel':
+                    self.logger.info(
+                        f"Current number of labelled pixels: {self.active_learning_loop.num_labelled_pixels} per image")
                 # Build a new dataloader after the ActiveLearningDataset is updated
+
                 new_loader = build_dataloader(
                     active_sets[i],
                     configs['data'].samples_per_gpu,
@@ -228,7 +242,7 @@ class ActiveLearningRunner(BaseRunner):
                     seed = configs['seed'],
                     drop_last = True
                 ) 
-
+                
                 # Actual "runner", either train() or val()
                 for _ in range(epochs):
                     if mode == 'train' and self.epoch >= self._max_epochs:
@@ -237,9 +251,15 @@ class ActiveLearningRunner(BaseRunner):
 
                 # step() if conditions met
                 if mode == 'train' and (self.epoch % configs['al']['query_epoch'] == 0):
-                    self.active_learning_loop.step()
-                    self.logger.info(
-                        f"Epoch {self.epoch} completed. Sampled new query of size {sample_settings['query_size']}.")
+                    if not self.active_learning_loop.step():
+                        self.logger.info(f"ActiveLearningLoop step() returns False. Ending the experiment.")
+                        break
+                    if sample_mode == 'image':
+                        self.logger.info(
+                            f"Epoch {self.epoch} completed. Sampled new query of size {sample_settings['query_size']}.")
+                    else:
+                        labelled_pix = self.active_learning_loop.num_labelled_pixels
+                        self.logger.info(f"Epoch {self.epoch} completed. {labelled_pix} pixels labelled, total budget {sample_settings['budget']}.")
         
         # Wait for some hooks like loggers to finish
         time.sleep(1)  

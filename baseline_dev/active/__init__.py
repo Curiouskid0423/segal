@@ -10,6 +10,7 @@ def get_heuristics(mode, name, shuffle_prop=0., reduction="none", **kwargs):
 
     """
     Args:
+        mode:           sample mode (e.g. image, pixel)
         name:           Name of the heuristic.
         shuffle_prop:   Shuffling proportion when getting ranks.
         reduction:      Reduction used after computing the score.
@@ -28,6 +29,7 @@ def get_heuristics(mode, name, shuffle_prop=0., reduction="none", **kwargs):
     return heuristic_dic[name](
         shuffle_prop = shuffle_prop, 
         reduction = reduction, 
+        mode = mode,
         **kwargs
         )
 

@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.utils.data as torchdata
 
+from mmseg.utils import get_root_logger
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 
@@ -51,8 +52,47 @@ class ActiveLearningLoop:
         self.sample_mode = configs['sample_mode']
         assert self.sample_mode in ['pixel', 'image'], "Sample mode needs to be either pixel or image"
         self.sample_settings = configs[f'{self.sample_mode}_based_settings']
+        # number of labelled pixels "per image"
+        self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
+        self.logger = get_root_logger()
 
         self.kwargs = kwargs
+
+    def update_image_labelled_pool(self, dataset, indices):
+        
+        if len(dataset) <= 0: 
+            return False
+
+        uncertainty_scores = self.get_probabilities(dataset, self.heuristic, **self.kwargs)
+
+        if uncertainty_scores is not None:
+            ranked = self.heuristic.reorder_indices(uncertainty_scores)
+            if indices is not None:
+                ranked = indices[np.array(ranked)]
+            if len(ranked) > 0:
+                self.dataset.label(ranked[:self.query_size])
+                return True
+
+        return False
+
+    def update_pixel_labelled_pool(self):
+
+        if self.num_labelled_pixels > self.sample_settings['budget']:
+            return False
+
+        new_pixel_map = self.get_probabilities(self.dataset, self.heuristic, **self.kwargs)
+        if not np.any(new_pixel_map): # new_pixel_map is an zero (null) array
+            return False
+            
+        # FIXME: truncation of the last extra batch affects the overall accuracy 
+        # (e.g. should label 50p but sometimes ends up labelling only 49p). fix this.
+        new_pixel_map = new_pixel_map[:len(self.dataset.masks)] 
+        self.dataset.masks = np.logical_or(self.dataset.masks, new_pixel_map)
+        self.logger.info(
+            f"Debug: new mask has {np.count_nonzero(self.dataset.masks) / len(self.dataset)} True values.")
+        self.num_labelled_pixels += self.sample_settings['query_size']
+
+        return True
 
     def step(self, pool=None) -> bool:
         """
@@ -61,32 +101,22 @@ class ActiveLearningLoop:
         Return: 
         True if successfully stepped, False if not (thus stop traing)
         """
+        if self.sample_mode == 'image':
+            pool = self.dataset.pool
+            assert pool is not None, "self.dataset.pool should not be None"
 
-        # `indices` Used in torchdata.Subset
-        
-        pool = self.dataset.pool
-        assert pool is not None, "self.dataset.pool should not be None"
+            if len(pool) > 0:
+                # Whether max sample size is capped
+                if self.max_sample != -1 and self.max_sample < len(pool):
+                    # Sample without replacement
+                    indices = np.random.choice(len(pool), self.max_sample, replace=False)
+                    pool = torchdata.Subset(pool, indices)
+                else:
+                    indices = np.arange(len(pool))
+                return self.update_image_labelled_pool(dataset=pool, indices=indices)
+        elif self.sample_mode == 'pixel':
+            return self.update_pixel_labelled_pool()
+        else:
+            raise ValueError(f"Sample mode {self.sample_mode} is not supported.")
 
-        if len(pool) > 0:
-            # Whether max sample size is capped
-            if self.max_sample != -1 and self.max_sample < len(pool):
-                # Sample without replacement
-                indices = np.random.choice(len(pool), self.max_sample, replace=False)
-                pool = torchdata.Subset(pool, indices)
-            else:
-                indices = np.arange(len(pool))
-        
-        # FIXME: for pixel-based sampling, you don't step thru the pool cuz every image is
-        # technically available in the labelled set, but just sparsely labelled.
-        if len(pool) > 0:
-            uncertainty_scores = self.get_probabilities(pool, self.heuristic, **self.kwargs)
-            
-            if uncertainty_scores is not None:
-                ranked = self.heuristic.reorder_indices(uncertainty_scores)
-                if indices is not None:
-                    ranked = indices[np.array(ranked)]
-                if len(ranked) > 0:
-                    self.dataset.label(ranked[:self.query_size])
-                    return True
-                    
         return False

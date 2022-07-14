@@ -95,9 +95,9 @@ class AbstractHeuristic:
                 )
             )
         assert scores.ndim == 1  # We want the uncertainty value per sample.
-        ranks = np.argsort(scores)
+        ranks = np.argsort(scores) # Ascending order
         if self.reversed:
-            ranks = ranks[::-1]
+            ranks = ranks[::-1] # Descending order
         ranks = _shuffle_subset(ranks, self.shuffle_prop)
         return ranks
 
@@ -122,8 +122,10 @@ class AbstractHeuristic:
 class Random(AbstractHeuristic):
 
     def __init__(
-        self, shuffle_prop=1.0, reduction="none", seed=None):
+        self, shuffle_prop=1.0, mode="image",reduction="none", seed=None):
         super().__init__(shuffle_prop=shuffle_prop, reverse=False)
+
+        self.mode = mode
         # rng = random number generator
         if seed is not None:
             self.rng = np.random.RandomState(seed)
@@ -131,28 +133,63 @@ class Random(AbstractHeuristic):
             self.rng = np.random
 
     def compute_score(self, predictions):
-
+        
         if isinstance(predictions, Tensor):
             predictions = predictions.cpu().numpy()
-
-        return self.rng.rand(predictions.shape[0])
+        
+        # return self.rng.rand(predictions.shape[0])
+        
+        if self.mode == 'image':
+            return self.rng.rand(predictions.shape[0])
+        elif self.mode == 'pixel':
+            l, c, h, w = predictions.shape
+            return self.rng.rand(l, h, w).astype(dtype=np.float16)
 
 class Entropy(AbstractHeuristic):
     """
     Sort by entropy. The higher, the more uncertain.
     """
-    def __init__(self, shuffle_prop=0, reduction="none"):
+    def __init__(self, mode, shuffle_prop=0, reduction="none"):
+        # reverse = True to turn "ascending" result into a descending order.
         super().__init__(shuffle_prop, reverse=True, reduction=reduction)
+        self.mode = mode
 
-    def segmap_mean_entropy(self, softmax_pred):
+    def pixel_mean_entropy(self, softmax_pred):
+        bs, classes, img_H, img_W = softmax_pred.size()
+        entropy_map = -torch.mul(softmax_pred, softmax_pred.log()).sum(dim=1).half()
+        entropy_map = entropy_map.reshape(shape=(bs, img_H, img_W))
+        return entropy_map.cpu().numpy()
+
+    def image_mean_entropy(self, softmax_pred):
         bs, classes, img_H, img_W = softmax_pred.size()
         flat_probs = softmax_pred.reshape(bs, -1)
         N = img_H * img_W # number of pixels
 
-        lst_of_entropy = (-torch.mul(flat_probs, flat_probs.log())).sum(dim=-1) 
-        return lst_of_entropy
+        entropy_lst = (-torch.mul(flat_probs, flat_probs.log())).sum(dim=-1) 
+        return entropy_lst.cpu().numpy()
 
     def compute_score(self, predictions):
         """ `predictions` have to be a Tensor """
         probs = to_prob(predictions)
-        return self.segmap_mean_entropy(probs).cpu().numpy()
+        if self.mode == 'image':
+            return self.image_mean_entropy(probs)
+        elif self.mode == 'pixel':
+            return self.pixel_mean_entropy(probs)
+
+class MarginSampling(AbstractHeuristic):
+    """
+    Sort by argmin(argmax(prob) - argmax2(prob)). The smaller the
+    difference is, the more uncertain. Not that instead of maximizing,
+    we want to minimize this value, as opposed to Entropy and Random
+    """
+
+    def __init__(self, mode, shuffle_prop=0, reduction="none"):
+        super().__init__(shuffle_prop, reverse=False, reduction=reduction)
+        self.mode = mode
+
+    def compute_score(self, predictions):
+        # FIXME: In development
+        probs = to_prob(predictions)
+        raise NotImplementedError
+
+        

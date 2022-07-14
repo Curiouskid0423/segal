@@ -118,6 +118,13 @@ def main():
     args = parse_args()
 
     cfg = Config.fromfile(args.config)
+
+    # Set ignore_index, in the case of pixel-based sampling, from
+    # cfg.active_learning to cfg.model before instantiation
+    if cfg.active_learning.sample_mode == 'pixel':
+        ignore_index = cfg.active_learning.pixel_based_settings.ignore_index
+        setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
+
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
@@ -191,13 +198,7 @@ def main():
     meta['seed'] = seed
     meta['exp_name'] = osp.basename(args.config)
 
-    """ Part 2. Build model """
-    # Set ignore_index, in the case of pixel-based sampling, 
-    # from cfg.active_learning to cfg.model before instantiation
-    if cfg.active_learning.sample_mode == 'pixel':
-        ignore_index = cfg.active_learning.pixel_based_settings.ignore_index
-        setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
-        
+    """ Part 2. Build model """        
     model = build_segmentor(
         cfg.model,
         train_cfg=cfg.get('train_cfg'),

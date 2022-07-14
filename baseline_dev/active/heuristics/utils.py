@@ -21,7 +21,7 @@ def to_prob(probs: Union[np.ndarray, torch.Tensor]):
     
     device = f"cuda:{probs.get_device()}" if probs.get_device() >= 0 else 'cpu'
     one_target = torch.Tensor([[1.]]).to(device)
-    sum_to_one = torch.allclose(probs.sum(axis=(-1, -2)), one_target)
+    sum_to_one = torch.allclose(probs.sum(axis=(-1, -2)), one_target.to(probs.dtype))
 
     if not_bounded or (multiclass and not sum_to_one):
         # Softmax all pixel values

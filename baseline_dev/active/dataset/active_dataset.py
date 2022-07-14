@@ -79,7 +79,11 @@ class ActiveLearningDataset(OracleDataset):
     def __getitem__(self, index):
         # index should be relative to the currently available list of indices
         index = self.get_indices_for_active_step()[index] 
-        return self.dataset[index]
+        if self.sample_mode == 'pixel':
+            return self.dataset[index], self.image_mask(index)
+        else:
+            return self.dataset[index]
+
 
     def image_mask(self, index):
         """
@@ -145,10 +149,9 @@ class ActiveLearningDataset(OracleDataset):
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
         self.logger.info("Creating masks for pixel-based sampling mode")
+
         self.masks = [np.random.permutation(h * w).reshape(h, w) < init_pixels for _ in range(N)]
         self.masks = np.array(self.masks)
-        # self.logger.info(f"first mask looks like: {self.image_mask(index=0)}")
-        # self.logger.info(f"verify first mask pixel count: {np.count_nonzero(self.image_mask(0))}")
 
     def label(self, index, value=None):
         """
