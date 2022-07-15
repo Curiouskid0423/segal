@@ -48,10 +48,10 @@ class ActiveLearningRunner(BaseRunner):
                 }
             )
         
-        # FIXME: check if this batch_size calculation is correct
+        # FIXME (DONE: can be removed cuz not actually referenced): 
+        # check if this batch_size calculation is correct
         batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
 
-        # FIXME: modify heuristics files based on pixel- or image-based sampling
         heuristic = get_heuristics(
             mode = cfg_al['sample_mode'],
             name = cfg_al['heuristic'], 
@@ -75,6 +75,7 @@ class ActiveLearningRunner(BaseRunner):
         if self.cfg_al['sample_mode'] == 'pixel':
             data_batch, mask = data_batch
             ground_truth = data_batch['gt_semantic_seg'].data[0]
+
             assert hasattr(self, 'cfg_al')
             ground_truth.flatten()[~mask.flatten()] = self.cfg_al['pixel_based_settings']['ignore_index']
             data_batch['gt_semantic_seg'].data[0]._data = ground_truth
@@ -102,12 +103,13 @@ class ActiveLearningRunner(BaseRunner):
         # self._max_iters = self._max_epochs * len(self.data_loader)
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
-        debug_var = False
+
+        debug_var = False # FIXME: remove this debug variable once done with development 
         for i, data_batch in enumerate(self.data_loader):
-            if not debug_var:
+            if not debug_var and self.cfg_al['sample_mode'] == 'pixel':
                 true_val_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
                 self.logger.info(
-                    f"debug_var: mask's True value count = {true_val_count}")
+                    f"Mask check: mask's True value count = {true_val_count}")
                 debug_var = True
             self._inner_iter = i
             self.call_hook('before_train_iter')
@@ -212,6 +214,7 @@ class ActiveLearningRunner(BaseRunner):
         self.call_hook('before_run')
         
         # Loop through the workflow until hits max_epochs
+        # active_loop_ret = True
         while self.epoch < self._max_epochs:
             for i, flow in enumerate(workflow):
                 mode, epochs = flow
@@ -230,8 +233,8 @@ class ActiveLearningRunner(BaseRunner):
                 elif sample_mode == 'pixel':
                     self.logger.info(
                         f"Current number of labelled pixels: {self.active_learning_loop.num_labelled_pixels} per image")
-                # Build a new dataloader after the ActiveLearningDataset is updated
 
+                # Build a new dataloader after the ActiveLearningDataset is updated
                 new_loader = build_dataloader(
                     active_sets[i],
                     configs['data'].samples_per_gpu,
@@ -251,9 +254,11 @@ class ActiveLearningRunner(BaseRunner):
 
                 # step() if conditions met
                 if mode == 'train' and (self.epoch % configs['al']['query_epoch'] == 0):
+                    
                     if not self.active_learning_loop.step():
-                        self.logger.info(f"ActiveLearningLoop step() returns False. Ending the experiment.")
-                        break
+                        self.logger.info("ActiveLearningLoop returns False, stopping the experiment.")
+                        break 
+
                     if sample_mode == 'image':
                         self.logger.info(
                             f"Epoch {self.epoch} completed. Sampled new query of size {sample_settings['query_size']}.")

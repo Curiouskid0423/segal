@@ -188,8 +188,18 @@ class MarginSampling(AbstractHeuristic):
         self.mode = mode
 
     def compute_score(self, predictions):
-        # FIXME: In development
-        probs = to_prob(predictions)
-        raise NotImplementedError
 
+        softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
+
+        assert isinstance(softmax_pred, torch.Tensor), "Predictions in MarginSampling has to be Tensor"
+        queries = softmax_pred.topk(k=2, dim=1).values 
+        query_map = (queries[:, 0, :, :] - queries[:, 1, :, :]).abs() # shape: (b, h, w)
+        print(f"query_map shape: {query_map.size()}")
+
+        if self.mode == 'image':
+            query_lst = query_map.view(query_map.shape[0], -1).mean(dim=-1) # shape: (b, 1)
+            return query_lst.cpu().numpy()
+            
+        elif self.mode == 'pixel':
+            return query_map
         

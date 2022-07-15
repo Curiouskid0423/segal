@@ -149,6 +149,7 @@ class ModelWrapper:
             dist=True if len(self.cfg['gpu_ids']) > 1 else False,
             seed=self.cfg['seed'],
             drop_last=False,
+            pin_memory=True # try set to False to fix memory issue (or use memmap)
             )
 
         results = []
@@ -171,7 +172,7 @@ class ModelWrapper:
                     ext_img_meta = data_batch['img_metas'][0]
 
                 # FIXME: half() saves space but hurts performance
-                outputs = model.module.encode_decode(ext_img, ext_img_meta).half() 
+                outputs = model.module.encode_decode(ext_img, ext_img_meta) #.half() 
                 scores = heuristic.get_uncertainties(outputs)
 
                 # Cannot store the entire pixel-level map due to memory shortage.
@@ -196,7 +197,6 @@ class ModelWrapper:
         results = np.array(results, dtype=np.bool)
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
-
         # FIXME: (TODO) Verify that `np.zeros` hack does not affect DataLoader accuracy
         return all_results if len(all_results) > 0 else np.zeros(len(dataset))
 

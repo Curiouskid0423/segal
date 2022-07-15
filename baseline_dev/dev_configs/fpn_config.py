@@ -1,10 +1,10 @@
 _base_ = [
-    '../configs/_base_/models/fcn_hr18.py', '../configs/_base_/datasets/cityscapes.py',
-    '../configs/_base_/default_runtime.py', '../configs/_base_/schedules/schedule_20k.py'
+    '../../configs/_base_/models/fpn_r50.py', './cityscapes_test.py',
+    '../../configs/_base_/default_runtime.py', '../../configs/_base_/schedules/schedule_20k.py'
 ]
 
 log_config = dict(
-    interval=40,
+    interval=50,
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(
@@ -12,11 +12,16 @@ log_config = dict(
         #     init_kwargs=dict(
         #         entity='syn2real',
         #         project='al_baseline',
-        #         name='fcn_hr18_gpu4_e48_q100x4_random_VERIFY',
+        #         name='fpn_r50_pix_gpu4_e20_q100x2_entropy',
         #     )
         # )
     ]
 )
+
+# Reference formula: num_worker = 4 * num_GPU 
+# data = dict(samples_per_gpu=16, workers_per_gpu=4)    # 1gpu
+# data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu
+# lr_config = dict(policy='poly', power=0.9**{GPU_NUM / query_epoch}, min_lr=1e-4, by_epoch=True)
 
 active_learning = dict(
     sample_mode="pixel",
@@ -25,12 +30,12 @@ active_learning = dict(
         query_size=100
         ),
     pixel_based_settings=dict(
-        budget=1000, 
+        budget=500, 
         # budget: the number of pixels sampled from "each" image. 
         # will sample "evenly" from each image.
         sample_threshold=5, 
         # for each image, only sample from top `sample_threshold` percentage
-        query_size=100, 
+        query_size=50, 
         # query size (in pixel) at each step. e.g. 100 pixels at a step
         sample_evenly=True, # FIXME: ignored for the current development phase.
         # sampling pixels evenly across each image yields much better results
@@ -42,19 +47,12 @@ active_learning = dict(
         # the first epoch (before any sampling)
         ),
     heuristic="entropy",
-    query_epoch=1,
+    query_epoch=3,
     shuffle_prop=0.0,
     )
 
 workflow = [('train', 1)]
-runner = dict(type='ActiveLearningRunner', max_epochs=20, max_iters=None)
+runner = dict(type='ActiveLearningRunner', max_epochs=27, max_iters=None)
 checkpoint_config = dict(by_epoch=True, interval=8)
-evaluation = dict(interval=3, by_epoch=False, metric='mIoU', pre_eval=True)
-
-# FIXME:
-# lr_config = dict(policy='poly', power=0.9**{GPU_NUM / query_epoch}, min_lr=1e-4, by_epoch=True)
-# lr_config = dict(policy='poly', power=0.9, min_lr=1e-4, by_epoch=False)
-
-# Reference formula: num_worker = 4 * num_GPU 
-# data = dict(samples_per_gpu=16, workers_per_gpu=4)    # 1gpu
-# data = dict(samples_per_gpu=2, workers_per_gpu=4)     # 8gpu
+optimizer = dict(type='SGD', lr=0.0005, momentum=0.9, weight_decay=0.0005)
+evaluation = dict(interval=3, by_epoch=True, metric='mIoU', pre_eval=True)

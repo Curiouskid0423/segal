@@ -53,7 +53,8 @@ class ActiveLearningLoop:
         assert self.sample_mode in ['pixel', 'image'], "Sample mode needs to be either pixel or image"
         self.sample_settings = configs[f'{self.sample_mode}_based_settings']
         # number of labelled pixels "per image"
-        self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
+        if self.sample_mode == 'pixel':
+            self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
 
         self.kwargs = kwargs
@@ -77,19 +78,16 @@ class ActiveLearningLoop:
 
     def update_pixel_labelled_pool(self):
 
-        if self.num_labelled_pixels > self.sample_settings['budget']:
-            return False
 
         new_pixel_map = self.get_probabilities(self.dataset, self.heuristic, **self.kwargs)
-        if not np.any(new_pixel_map): # new_pixel_map is an zero (null) array
+
+        if self.num_labelled_pixels >= self.sample_settings['budget'] or not np.any(new_pixel_map): 
             return False
             
         # FIXME: truncation of the last extra batch affects the overall accuracy 
         # (e.g. should label 50p but sometimes ends up labelling only 49p). fix this.
         new_pixel_map = new_pixel_map[:len(self.dataset.masks)] 
         self.dataset.masks = np.logical_or(self.dataset.masks, new_pixel_map)
-        self.logger.info(
-            f"Debug: new mask has {np.count_nonzero(self.dataset.masks) / len(self.dataset)} True values.")
         self.num_labelled_pixels += self.sample_settings['query_size']
 
         return True
@@ -114,8 +112,10 @@ class ActiveLearningLoop:
                 else:
                     indices = np.arange(len(pool))
                 return self.update_image_labelled_pool(dataset=pool, indices=indices)
+
         elif self.sample_mode == 'pixel':
             return self.update_pixel_labelled_pool()
+
         else:
             raise ValueError(f"Sample mode {self.sample_mode} is not supported.")
 

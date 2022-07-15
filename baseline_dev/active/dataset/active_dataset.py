@@ -80,7 +80,7 @@ class ActiveLearningDataset(OracleDataset):
         # index should be relative to the currently available list of indices
         index = self.get_indices_for_active_step()[index] 
         if self.sample_mode == 'pixel':
-            return self.dataset[index], self.image_mask(index)
+            return self.dataset[index], self.masks[index]
         else:
             return self.dataset[index]
 
