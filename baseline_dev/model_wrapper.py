@@ -171,7 +171,6 @@ class ModelWrapper:
                     ext_img = data_batch['img'][0].cuda()
                     ext_img_meta = data_batch['img_metas'][0]
 
-                # FIXME: half() saves space but hurts performance
                 outputs = model.module.encode_decode(ext_img, ext_img_meta) #.half() 
                 scores = heuristic.get_uncertainties(outputs)
 
@@ -197,7 +196,7 @@ class ModelWrapper:
         results = np.array(results, dtype=np.bool)
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
-        # FIXME: (TODO) Verify that `np.zeros` hack does not affect DataLoader accuracy
+        # FIXME: (top priority task) Verify that `np.zeros` hack does not affect DataLoader accuracy 
         return all_results if len(all_results) > 0 else np.zeros(len(dataset))
 
     def extract_query_indices(self, uc_map):

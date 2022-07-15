@@ -156,7 +156,7 @@ class Entropy(AbstractHeuristic):
 
     def pixel_mean_entropy(self, softmax_pred):
         bs, classes, img_H, img_W = softmax_pred.size()
-        entropy_map = -torch.mul(softmax_pred, softmax_pred.log()).sum(dim=1).half()
+        entropy_map = -torch.mul(softmax_pred, softmax_pred.log()).sum(dim=1) #.half()
         entropy_map = entropy_map.reshape(shape=(bs, img_H, img_W))
         return entropy_map.cpu().numpy()
 
@@ -194,12 +194,11 @@ class MarginSampling(AbstractHeuristic):
         assert isinstance(softmax_pred, torch.Tensor), "Predictions in MarginSampling has to be Tensor"
         queries = softmax_pred.topk(k=2, dim=1).values 
         query_map = (queries[:, 0, :, :] - queries[:, 1, :, :]).abs() # shape: (b, h, w)
-        print(f"query_map shape: {query_map.size()}")
-
+        
         if self.mode == 'image':
-            query_lst = query_map.view(query_map.shape[0], -1).mean(dim=-1) # shape: (b, 1)
+            query_lst = query_map.reshape(query_map.shape[0], -1).mean(dim=-1) # shape: (b, 1)
             return query_lst.cpu().numpy()
             
         elif self.mode == 'pixel':
-            return query_map
+            return query_map.cpu().numpy()
         

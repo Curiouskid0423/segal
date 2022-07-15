@@ -19,7 +19,7 @@ log_config = dict(
 )
 
 active_learning = dict(
-    sample_mode="pixel",
+    sample_mode="image",
     image_based_settings=dict(
         initial_pool=100, 
         query_size=100
@@ -35,7 +35,7 @@ active_learning = dict(
         sample_evenly=True, # FIXME: ignored for the current development phase.
         # sampling pixels evenly across each image yields much better results
         ignore_index=255, 
-        # ignore_index: set ignore_index according to the dataset (FIXME: any 
+        # ignore_index: set ignore_index according to the dataset (NOTE: any 
         # value other than 255 bugs due to seg_pad_val in Pad transform. Fix this.) 
         initial_label_pixels=100
         # initial_label_pixels: number of pixels labelled randomly at 
@@ -51,7 +51,7 @@ runner = dict(type='ActiveLearningRunner', max_epochs=20, max_iters=None)
 checkpoint_config = dict(by_epoch=True, interval=8)
 evaluation = dict(interval=3, by_epoch=False, metric='mIoU', pre_eval=True)
 
-# FIXME:
+# NOTE:
 # lr_config = dict(policy='poly', power=0.9**{GPU_NUM / query_epoch}, min_lr=1e-4, by_epoch=True)
 # lr_config = dict(policy='poly', power=0.9, min_lr=1e-4, by_epoch=False)
 

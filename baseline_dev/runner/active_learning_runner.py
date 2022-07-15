@@ -47,10 +47,6 @@ class ActiveLearningRunner(BaseRunner):
                 'seed': seed,
                 }
             )
-        
-        # FIXME (DONE: can be removed cuz not actually referenced): 
-        # check if this batch_size calculation is correct
-        batch_size = cfg_data.samples_per_gpu * len(gpu_ids)
 
         heuristic = get_heuristics(
             mode = cfg_al['sample_mode'],
@@ -63,7 +59,6 @@ class ActiveLearningRunner(BaseRunner):
             get_probabilities = self.wrapper.predict_on_dataset, 
             heuristic = heuristic,
             configs = cfg_al,
-            batch_size = batch_size,  
             use_cuda = torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
             )
@@ -72,7 +67,7 @@ class ActiveLearningRunner(BaseRunner):
 
         """ Either train, val or custom batch processing """
             
-        if self.cfg_al['sample_mode'] == 'pixel':
+        if train_mode and self.cfg_al['sample_mode'] == 'pixel':
             data_batch, mask = data_batch
             ground_truth = data_batch['gt_semantic_seg'].data[0]
 
@@ -104,13 +99,13 @@ class ActiveLearningRunner(BaseRunner):
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
 
-        debug_var = False # FIXME: remove this debug variable once done with development 
+        mask_count_var = False  
         for i, data_batch in enumerate(self.data_loader):
-            if not debug_var and self.cfg_al['sample_mode'] == 'pixel':
+            if not mask_count_var and self.cfg_al['sample_mode'] == 'pixel':
                 true_val_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
                 self.logger.info(
                     f"Mask check: mask's True value count = {true_val_count}")
-                debug_var = True
+                mask_count_var = True
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -228,11 +223,7 @@ class ActiveLearningRunner(BaseRunner):
                         'mode in workflow must be a str, but got {}'.format(type(mode)))
 
                 # For `epochs` epoch, iterate with a static dataloader
-                if sample_mode == 'image':
-                    self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-                elif sample_mode == 'pixel':
-                    self.logger.info(
-                        f"Current number of labelled pixels: {self.active_learning_loop.num_labelled_pixels} per image")
+                self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
 
                 # Build a new dataloader after the ActiveLearningDataset is updated
                 new_loader = build_dataloader(

@@ -65,6 +65,7 @@ class ActiveLearningLoop:
             return False
 
         uncertainty_scores = self.get_probabilities(dataset, self.heuristic, **self.kwargs)
+        # scores_check = np.any(uncertainty_scores.astype(bool)) # check if score is np.zeros
 
         if uncertainty_scores is not None:
             ranked = self.heuristic.reorder_indices(uncertainty_scores)

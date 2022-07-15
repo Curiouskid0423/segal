@@ -2,7 +2,7 @@ CONFIG=$1
 GPUS=$2
 NNODES=${NNODES:-1}
 NODE_RANK=${NODE_RANK:-0}
-PORT=${PORT:-29501}
+PORT=${PORT:-29500}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
 # NOTE: if module cannot be found, export PYTHONPATH to current project dir.
