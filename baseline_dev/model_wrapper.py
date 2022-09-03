@@ -89,13 +89,14 @@ class ModelWrapper:
         criterion (Callable): A loss function.
     """
 
-    def __init__(self, model, cfg=None):
+    def __init__(self, model, cfgs):
         self.backbone = model
         self.logger = get_root_logger()
-        assert cfg is not None, "cfg argument has to be provided for ModelWrapper to be constructed."
-        self.cfg = cfg
-        self.sample_mode = cfg['al']['sample_mode']
-        self.sample_settings = cfg['al'][f'{self.sample_mode}_based_settings']
+        self.cfg = cfgs
+        self.sample_mode = cfgs.runner.sample_mode
+        self.sample_settings = getattr(cfgs.active_learning.settings, self.sample_mode)
+        self.gpu_ids = cfgs.gpu_ids
+        self.seed = cfgs.seed
         
     def predict_on_dataset_generator(
         self, dataset, batch_size, iterations, use_cuda, workers = 4,
@@ -137,19 +138,17 @@ class ModelWrapper:
         model = self.backbone
         if self.sample_mode == 'pixel':
             assert isinstance(dataset, ActiveLearningDataset)
-
-        # FIXME: check if test_loader uses the train-split  
-        # of dataset with "test_pipeline" augmentation
+        
         test_loader = build_dataloader(
             dataset,
-            samples_per_gpu=1, # self.cfg['data'].samples_per_gpu,
-            workers_per_gpu=self.cfg['data'].workers_per_gpu,
+            samples_per_gpu=1, 
+            workers_per_gpu=self.cfg.data.workers_per_gpu,
             shuffle=False,
-            num_gpus= len(self.cfg['gpu_ids']),
-            dist=True if len(self.cfg['gpu_ids']) > 1 else False,
-            seed=self.cfg['seed'],
+            num_gpus= len(self.gpu_ids),
+            dist=True if len(self.gpu_ids) > 1 else False,
+            seed=self.seed,
             drop_last=False,
-            pin_memory=True # try set to False to fix memory issue (or use memmap)
+            pin_memory=True  # NOTE: try set to False to fix memory issue (or use memmap)
             )
 
         results = []

@@ -7,7 +7,6 @@ from typing import Callable
 import numpy as np
 import torch
 import torch.utils.data as torchdata
-
 from mmseg.utils import get_root_logger
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
@@ -38,21 +37,15 @@ class ActiveLearningLoop:
         max_sample=-1,
         **kwargs,
     ):
-        if configs['sample_mode'] == 'image':
-            self.settings = configs['image_based_settings']
-        else:
-            self.settings = configs['pixel_based_settings']
-        self.query_size = self.settings['query_size']
 
+        self.dataset = dataset 
         self.get_probabilities = get_probabilities
         self.heuristic = heuristic
-        self.dataset = dataset 
         self.max_sample = max_sample
-        self.configs = configs # cfg.active_learning dictionary
-        self.sample_mode = configs['sample_mode']
+        self.configs = configs 
+        self.sample_mode = configs.runner.sample_mode
         assert self.sample_mode in ['pixel', 'image'], "Sample mode needs to be either pixel or image"
-        self.sample_settings = configs[f'{self.sample_mode}_based_settings']
-        # number of labelled pixels "per image"
+        self.sample_settings = getattr(configs.active_learning.settings, self.sample_mode)
         if self.sample_mode == 'pixel':
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
@@ -72,21 +65,18 @@ class ActiveLearningLoop:
             if indices is not None:
                 ranked = indices[np.array(ranked)]
             if len(ranked) > 0:
-                self.dataset.label(ranked[:self.query_size])
+                self.dataset.label(ranked[:self.sample_settings.query_size])
                 return True
 
         return False
 
     def update_pixel_labelled_pool(self):
 
-
         new_pixel_map = self.get_probabilities(self.dataset, self.heuristic, **self.kwargs)
 
-        if self.num_labelled_pixels >= self.sample_settings['budget'] or not np.any(new_pixel_map): 
+        if not np.any(new_pixel_map): 
             return False
             
-        # FIXME: truncation of the last extra batch affects the overall accuracy 
-        # (e.g. should label 50p but sometimes ends up labelling only 49p). fix this.
         new_pixel_map = new_pixel_map[:len(self.dataset.masks)] 
         self.dataset.masks = np.logical_or(self.dataset.masks, new_pixel_map)
         self.num_labelled_pixels += self.sample_settings['query_size']
@@ -100,6 +90,7 @@ class ActiveLearningLoop:
         Return: 
         True if successfully stepped, False if not (thus stop traing)
         """
+        
         if self.sample_mode == 'image':
             pool = self.dataset.pool
             assert pool is not None, "self.dataset.pool should not be None"

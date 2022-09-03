@@ -5,8 +5,10 @@ but with some Active Learning wrappers that we created.
 
 import argparse
 import copy
+import sys
 import os
 import os.path as osp
+sys.path.append(os.getcwd())
 import time
 import warnings
 import torch
@@ -121,8 +123,8 @@ def main():
 
     # Set ignore_index, in the case of pixel-based sampling, from
     # cfg.active_learning to cfg.model before instantiation
-    if cfg.active_learning.sample_mode == 'pixel':
-        ignore_index = cfg.active_learning.pixel_based_settings.ignore_index
+    if cfg.runner.sample_mode == 'pixel':
+        ignore_index = cfg.active_learning.settings.pixel.ignore_index
         setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
 
     if args.cfg_options is not None:

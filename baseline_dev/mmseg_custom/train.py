@@ -80,9 +80,6 @@ def train_al_segmentor(model,
     # an ugly workaround to make the .log and .log.json filenames the same
     runner.timestamp = timestamp
 
-    if cfg.active_learning.sample_mode == 'pixel':
-        pass
-
     # FIXME: make sure that ignore_index in pixel-sampling works with validation set too
     """Set up eval / validate hooks"""
     if validate:
@@ -124,12 +121,4 @@ def train_al_segmentor(model,
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
 
-    cfgs = {
-        "seed": cfg.seed,
-        "gpu_ids": cfg.gpu_ids,
-        "data": cfg.data,
-        "workflow": cfg.workflow,
-        "al": cfg.active_learning
-    }
-
-    runner.run(datasets, configs=cfgs)
+    runner.run(datasets, configs=cfg)

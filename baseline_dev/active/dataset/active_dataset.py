@@ -49,9 +49,9 @@ class ActiveLearningDataset(OracleDataset):
         ):
         
         assert configs is not None, "configs cannot be None"
-        cfg_data = configs['data']
-        self.settings = configs['sample_settings']
-        self.sample_mode = configs['sample_mode']
+        cfg_data = configs.data
+        self.sample_mode = configs.runner.sample_mode
+        self.settings = getattr(configs.active_learning.settings, self.sample_mode)
         
         # Initialize labelled pool to be empty
         if labelled is not None:
