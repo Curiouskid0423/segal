@@ -11,12 +11,14 @@ import numpy as np
 import pickle
 import torch
 import torch.distributed as dist
+from torch.utils.data import Dataset
 import mmcv
 from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
 from mmseg.utils import get_root_logger
 from mmseg.datasets import build_dataloader
 from baseline_dev.active.dataset.active_dataset import ActiveLearningDataset
+from baseline_dev.active.heuristics import AbstractHeuristic
 # from torch.utils.data.dataloader import default_collate
 # from mmcv.engine import collect_results_cpu
 
@@ -27,8 +29,6 @@ def map_on_tensor(fn, val):
     elif isinstance(val, dict):
         return {k: fn(v) for k, v in val.items()}
     return fn(val)
-
-
 
 def collect_results_gpu(result_part, size):
     """Collect results under gpu mode.
@@ -79,7 +79,6 @@ def collect_results_gpu(result_part, size):
         ordered_results = ordered_results[:size]
         return ordered_results
 
-
 class ModelWrapper:
     """
     Wrapper created to ease the training/testing/loading.
@@ -125,7 +124,8 @@ class ModelWrapper:
         self.eval()
         raise NotImplementedError
 
-    def predict_on_dataset(self, dataset, heuristic, tmpdir="./tmpdir/", **kwargs):
+    def predict_on_dataset(
+        self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
         """
         Make predictions on the unlabelled pool during the sampling phase.
         Image sampling mode:
@@ -138,7 +138,6 @@ class ModelWrapper:
         model = self.backbone
         if self.sample_mode == 'pixel':
             assert isinstance(dataset, ActiveLearningDataset)
-        
         test_loader = build_dataloader(
             dataset,
             samples_per_gpu=1, 
@@ -148,7 +147,7 @@ class ModelWrapper:
             dist=True if len(self.gpu_ids) > 1 else False,
             seed=self.seed,
             drop_last=False,
-            pin_memory=True  # NOTE: try set to False to fix memory issue (or use memmap)
+            pin_memory=False  # NOTE: try set to False to fix memory issue (or use memmap)
             )
 
         results = []
@@ -162,12 +161,14 @@ class ModelWrapper:
                 data_batch, mask = data_batch
                 
             with torch.no_grad():
-                if isinstance(data_batch['img'], DataContainer) \
-                    and isinstance(data_batch['img_metas'], DataContainer):
+                if isinstance(data_batch['img'], DataContainer):
                     ext_img = data_batch['img'].data[0].cuda()
+                else:
+                    ext_img = data_batch['img'][0].data[0].cuda()
+
+                if isinstance(data_batch['img_metas'], DataContainer):
                     ext_img_meta = data_batch['img_metas'].data[0]
                 else:
-                    ext_img = data_batch['img'][0].cuda()
                     ext_img_meta = data_batch['img_metas'][0]
 
                 outputs = model.module.encode_decode(ext_img, ext_img_meta) #.half() 
@@ -195,8 +196,17 @@ class ModelWrapper:
         results = np.array(results, dtype=np.bool)
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
+        
         # FIXME: (top priority task) Verify that `np.zeros` hack does not affect DataLoader accuracy 
-        return all_results if len(all_results) > 0 else np.zeros(len(dataset))
+        
+        if len(all_results) > 0:
+            return all_results
+        elif self.sample_mode == 'pixel':
+            ds = dataset[0][0]['gt_semantic_seg'][0].data.squeeze().size()
+            return np.zeros(shape=(len(dataset), ds[0], ds[1]))
+        else:
+            return np.zeros(len(dataset))
+        # return all_results if len(all_results) > 0 else np.zeros(len(dataset))
 
     def extract_query_indices(self, uc_map):
         """
@@ -217,6 +227,8 @@ class ModelWrapper:
         ).indices.cpu().numpy()
         if top_k_percent > 0.:
             query_indices = np.random.choice(query_indices, size=query_size, replace=False)
+        
+        # Create a new query mask
         new_query = np.zeros((h * w), dtype=np.bool)
         new_query[query_indices] = True
         new_query = new_query.reshape((h, w))

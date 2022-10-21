@@ -4,17 +4,22 @@ import os.path as osp
 import platform
 import shutil
 import torch
+from torch.utils.data import Dataset
+from torchvision.transforms import InterpolationMode as IM
+import torchvision.transforms.functional as TF
 import mmcv
 import numpy as np
-from typing import Union, List, Dict
-from argparse import Namespace
-from mmcv.parallel.collate import collate as mmcv_collate_fn
-from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
-from mmcv.runner.builder import RUNNERS
-from mmseg.datasets import build_dataloader
-from mmseg.datasets.pipelines import Compose
 import time
 from copy import deepcopy
+from typing import Union, List, Dict
+from argparse import Namespace
+from mmcv.cnn.utils import revert_sync_batchnorm
+from mmcv.parallel.collate import collate as mmcv_collate_fn
+from mmcv.runner import BaseRunner, BaseModule, get_host_info, save_checkpoint
+from mmcv.runner.builder import RUNNERS
+from mmseg.models import build_segmentor
+from mmseg.datasets import build_dataloader
+from mmseg.datasets.pipelines import Compose
 from baseline_dev.active.active_loop import ActiveLearningLoop
 from baseline_dev.active.dataset import ActiveLearningDataset
 from baseline_dev.model_wrapper import ModelWrapper
@@ -35,31 +40,60 @@ class ActiveLearningRunner(BaseRunner):
 
     def __init__(
         self, model, batch_processor=None, optimizer=None, work_dir=None, logger=None, meta=None, max_iters=None, 
-        max_epochs=None, query_epochs=None, sample_mode=None, sample_rounds=None):
+        max_epochs=None, query_epochs=None, sample_mode=None, sample_rounds=None, pretrained=None):
 
-        # FIXME: Need to support "max_iter" as well. This code currently does not support it.
+        # FIXME: Support other pretrained options
+        if pretrained not in [None, 'supervised']:
+            raise NotImplementedError("Only supervised pretrained mode is supported at the current phase.")
+
+        if max_iters is not None:
+            raise NotImplementedError("`max_iter` argument is not supported in ActiveLearningRunner.")
         self.query_epochs = query_epochs
         self.sample_mode = sample_mode
         self.sample_rounds = sample_rounds
+        self.sampling_terminate = False
         
         super().__init__(
-            model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs=query_epochs)
+            model, batch_processor, optimizer, work_dir, logger, meta, 
+            max_iters, max_epochs=query_epochs)
         
 
-    def init_active(self, dataset, cfgs):
+    def init_active_variables(
+        self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
         
-        self.wrapper = ModelWrapper(self.model, cfgs)
+        self.wrapper = ModelWrapper(self.model, cfg)
         heuristic = get_heuristics(
-            self.sample_mode, cfgs.active_learning.heuristic, cfgs.active_learning.shuffle_prop)
+            self.sample_mode, cfg.active_learning.heuristic, cfg.active_learning.shuffle_prop)
 
         self.active_learning_loop = ActiveLearningLoop(
             dataset = dataset, 
+            query_dataset= query_dataset,
             get_probabilities = self.wrapper.predict_on_dataset, 
             heuristic = heuristic,
-            configs = cfgs,
+            configs = cfg,
             use_cuda = torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
         )
+        self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
+        self.get_initial_labels(self.sample_mode, settings, dataset)
+        self.get_initial_labels(self.sample_mode, settings, query_dataset)
+
+        # Set up _max_iters based on `workflow` config
+        batch_size = cfg.data.samples_per_gpu * len(cfg.gpu_ids)
+        dataloader_size = len(dataset) // batch_size
+        self._max_iters = self.sample_rounds * self.query_epochs * dataloader_size
+
+    def adjust_mask(self, mask: torch.Tensor, meta: List, scale=None):
+        for i in range(len(mask)):
+            # Adjustment for "RandomFlip"
+            if 'flip' in meta[i] and meta[i]['flip']:
+                axis = [1] if (meta[i]['flip_direction'] == 'horizontal') else [0]
+                mask[i] = mask[i].flip(dims=axis)
+            
+        # Adjustment for "Resize"
+        if scale != None:
+            mask = TF.resize(mask.unsqueeze(1), scale, IM.NEAREST).squeeze()
+        return mask
 
     def run_iter(self, data_batch, train_mode, **kwargs):
 
@@ -68,7 +102,9 @@ class ActiveLearningRunner(BaseRunner):
         if train_mode and self.sample_mode == 'pixel':
             data_batch, mask = data_batch
             ground_truth = data_batch['gt_semantic_seg'].data[0]
-
+            mask = self.adjust_mask(
+                mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth.squeeze()[0].size())
+            
             assert hasattr(self, 'cfg_al')
             ground_truth.flatten()[~mask.flatten()] = self.cfg_al.settings.pixel.ignore_index
             data_batch['gt_semantic_seg'].data[0]._data = ground_truth
@@ -90,6 +126,12 @@ class ActiveLearningRunner(BaseRunner):
         self.outputs = outputs
 
     def train(self, data_loader, **kwargs):
+
+        def pixel_mask_check(data_batch):
+            true_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
+            self.logger.info(f"Mask check: mask's True value count = {true_count}")
+            return True
+
         self.model.train()
         self.mode = 'train'
         self.data_loader = data_loader
@@ -99,10 +141,7 @@ class ActiveLearningRunner(BaseRunner):
         mask_count_var = False  # FIXME: debug variable
         for i, data_batch in enumerate(self.data_loader):
             if not mask_count_var and self.sample_mode == 'pixel':
-                true_val_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
-                self.logger.info(
-                    f"(DEBUG) mask check: mask's True value count = {true_val_count}")
-                mask_count_var = True
+                mask_count_var = pixel_mask_check(data_batch)
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -126,10 +165,22 @@ class ActiveLearningRunner(BaseRunner):
 
         self.call_hook('after_val_epoch')
 
-    def active_sampling(self, configs: Namespace, sample_mode: str, sample_settings: dict):
+    def query(self, data_loader, **kwargs):
+        """
+        This method takes in a DataLoader with `query pipeline` and performs one step
+        in ActiveLearningLoop, which should update the `mask` variable.
+        """
+        if not self.active_sampling(sample_mode=self.sample_mode):
+            self.sampling_terminate = True
         
-        # Apply test pipeline for evaluation in sampling (AL_Dataset > CityScapes)
-        self.active_learning_loop.dataset.dataset.pipeline = Compose(configs.test_pipeline)
+    def recursively_set_is_init(self, model: BaseModule, value: bool):
+        model._is_init = value
+        for m in model.children():
+            if hasattr(m, '_is_init'):
+                m._is_init = value
+                self.recursively_set_is_init(model=m, value=value)
+
+    def active_sampling(self, sample_mode: str):
 
         if not self.active_learning_loop.step():
             self.logger.info("ActiveLearningLoop returns False, stopping the experiment.")
@@ -137,120 +188,116 @@ class ActiveLearningRunner(BaseRunner):
 
         if sample_mode == 'image':
             self.logger.info(
-                f"Epoch {self.epoch} completed. Sampled new query of size {sample_settings['query_size']}.")
+                f"Epoch {self.epoch} completed. Sampled new query of size {self.sample_settings['query_size']}.")
         else:
             labelled_pix = self.active_learning_loop.num_labelled_pixels
-            total_budget = self.sample_rounds * sample_settings.query_size
+            total_budget = self.sample_rounds * self.sample_settings.query_size
             self.logger.info(f"Epoch {self.epoch} completed. {labelled_pix} pixels labelled, total budget {total_budget}.")
 
-        # FIXME: Reset weights (check if this works or maybe use "apply")
+        # Reset weights (backbone, neck, decode_head)
         if "DataParallel" in self.model.__class__.__name__:
+            self.recursively_set_is_init(self.model.module, False)
+            # FIXME: re-init fails in multi-gpu setting when loading pre-trained weights
             self.model.module.init_weights()
         else:
+            self.recursively_set_is_init(self.model, False)
             self.model.init_weights()
+
+        self.logger.info("Process sleep for 3 seconds.")
+        time.sleep(3) # prevent deadlock before step() returns from all devices
         self.logger.info("Re-initialized weights and lr after sampling.")
         return True
         
     def get_initial_labels(self, sample_mode: str, sample_settings: dict, active_set: ActiveLearningDataset):
+        self.logger.info(f"Sample mode: {sample_mode}")
         if sample_mode == 'image':
             active_set.label_randomly(sample_settings['initial_pool'])
             self.logger.info(
                 f"ActiveLearningDataset created with initial pool of {sample_settings['initial_pool']}.")
         elif sample_mode == 'pixel':
-            active_set.label_all_with_mask()
-            self.logger.info(f"In pixel-sampling mode, labelled all images with ignore_index.")
+            active_set.label_all_with_mask(mask_shape=self.mask_size)
         else:
             raise ValueError(
                 "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
 
-    def run(self, datasets: list, configs: Namespace = None, **kwargs):
-        
-        """
-        datasets have to be list (of either one or two datasets typically)
-        of PyTorch datasets such that ActiveLearningDataset wrapper can work.
-        """
-
+    def create_active_sets(self, datasets, configs):
         workflow = configs.workflow
+        active_sets = deepcopy(datasets)
+        train_idx, query_idx = None, None
+        for i, flow in enumerate(workflow):
+            mode, epochs = flow 
+            active_sets[i] = ActiveLearningDataset(datasets[i], configs=configs)
+            if mode == 'train':
+                assert self.query_epochs % epochs == 0, \
+                    f"Train epoch in `workflow` has to be a factor of `query_epochs` but got {epochs} and {self.query_epochs}."
+                train_idx = i
+            elif mode == 'query':
+                query_idx = i
+
+        assert train_idx!=None and query_idx!=None, "Please provide a training set in the list of `workflow`."
+
+        self.init_active_variables(
+            dataset = active_sets[train_idx],
+            query_dataset = active_sets[query_idx],
+            settings = self.sample_settings, 
+            cfg = configs
+        )
+
+        return active_sets
+
+    def run(self, datasets: list, configs: Namespace = None, **kwargs):
+        workflow = configs.workflow
+        # Save config.active_learning as instance variable for later access
+        self.cfg_al = configs.active_learning
+        self.sample_settings = getattr(self.cfg_al.settings, self.sample_mode)
+
         assert isinstance(datasets, list)
         assert configs != None
         assert mmcv.is_list_of(workflow, tuple)
         assert len(datasets) == len(workflow)
         
-        # Save config.active_learning as instance variable for later access
-        self.cfg_al = configs.active_learning
-        active_sets = deepcopy(datasets)
-        has_train_set = False
-        sample_settings = getattr(self.cfg_al.settings, self.sample_mode)
-
-        # Set up ActiveLearningDataset instance (for ActiveLearningLoop step thru later)
-        # and label the data in the corresponding strategy
-        for i, flow in enumerate(workflow):
-            mode, _ = flow 
-            if mode == 'train':
-                active_sets[i] = ActiveLearningDataset(datasets[i], configs=configs)
-                self.init_active(active_sets[i], configs)
-                self.get_initial_labels(self.sample_mode, sample_settings, active_sets[i])
-                has_train_set = True
-
-        assert has_train_set is True, "Please provide a training set in workflow arguments."
-
-        # Set up hyperparameters based on the cfg.workflow (modification based on MMSeg codebase)
-        for i, flow in enumerate(workflow):
-            mode, _ = flow 
-            if mode == 'train':
-                batch_size = configs.data.samples_per_gpu * len(configs.gpu_ids)
-                loader_len = len(active_sets[i]) // batch_size
-                self._max_iters = loader_len * self.query_epochs * (self.query_epochs + 1) // 2
-                break
+        # Set up ActiveLearningDataset instance and label the data in the specified strategy
+        active_sets = self.create_active_sets(datasets, configs)
         
         work_dir = self.work_dir if self.work_dir is not None else 'NONE'
-        self.logger.info('Start running, host: %s, work_dir: %s',
-                         get_host_info(), work_dir)
-        self.logger.info('Hooks will be executed in the following order:\n%s',
-                         self.get_hook_info())
-        self.logger.info('workflow: %s, query: %d epochs', workflow,
-                         self.query_epochs)
+        self.logger.info(
+            'Start running, host: %s, work_dir: %s', get_host_info(), work_dir)
+        self.logger.info(
+            'Hooks will be executed in the following order:\n%s', self.get_hook_info())
+        self.logger.info(
+            'workflow: %s, query epochs per sampling round: %d epochs', workflow, self.query_epochs)
         self.call_hook('before_run')
-        
+
         # Loop through the workflow until hits max_epochs
         for al_round in range(self.sample_rounds):
             self.logger.info(f"Active Learning sample round {al_round+1}.")
             self._epoch = 0
-            self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-            while self.epoch < self.query_epochs:
-                for i, flow in enumerate(workflow):
-                    mode, epochs = flow
-                    if isinstance(mode, str):  # e.g. train mode
-                        if not hasattr(self, mode):
-                            raise ValueError(
-                                f'runner has no method named "{mode}" to run an epoch')
-                        epoch_runner = getattr(self, mode)
-                    else:
-                        raise TypeError(
-                            'mode in workflow must be a str, but got {}'.format(type(mode)))
-                    
-                    # Build a new dataloader after the ActiveLearningDataset is updated
-                    # Re-apply train pipeline after finishing sampling
-                    active_sets[i].dataset.pipeline = Compose(configs.train_pipeline)
-                    new_loader = build_dataloader(
-                        active_sets[i],
-                        configs.data.samples_per_gpu,
-                        configs.data.workers_per_gpu,
-                        num_gpus = len(configs.gpu_ids),
-                        dist = True if len(configs.gpu_ids) > 1 else False,
-                        seed = configs.seed,
-                        drop_last = True
-                    ) 
+            for i, flow in enumerate(workflow):
+                mode, epochs = flow
+                self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
+                if isinstance(mode, str):  # e.g. train mode
+                    if not hasattr(self, mode):
+                        raise ValueError(
+                            f'runner has no method named "{mode}" to run an epoch')
+                    epoch_runner = getattr(self, mode)
+                else:
+                    raise TypeError('mode in workflow must be a str, but got {}'.format(type(mode)))
                 
-                    for _ in range(epochs):
-                        epoch_runner(new_loader, **kwargs)
-
-                    # step() if conditions met (FIXME: check code redundancy)
-                    if mode == 'train' and (self.epoch % self.query_epochs == 0):
-                        if not self.active_sampling(
-                            configs=configs, sample_mode=self.sample_mode, sample_settings=sample_settings):
-                            break    
-                        self.logger.info(f"sampling start.")
+                new_loader = build_dataloader(
+                    active_sets[i],
+                    configs.data.samples_per_gpu,
+                    configs.data.workers_per_gpu,
+                    num_gpus = len(configs.gpu_ids),
+                    dist = True if len(configs.gpu_ids) > 1 else False,
+                    seed = configs.seed,
+                    drop_last = True
+                ) 
+            
+                for _ in range(epochs):
+                    epoch_runner(new_loader, **kwargs)
+                
+                if self.sampling_terminate:
+                    return
 
         # Wait for some hooks like loggers to finish
         time.sleep(1)  

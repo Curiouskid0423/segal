@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.utils.data as torchdata
 from mmseg.utils import get_root_logger
+from mmcv.runner import get_dist_info
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 
@@ -19,7 +20,8 @@ class ActiveLearningLoop:
     to the training set (labeled).
 
     Args:
-        dataset (type ActiveLearningDataset): Dataset with some sample already labelled.
+        dataset:                Type ActiveLearningDataset. Dataset with some sample already labelled.
+        query_dataset:          Dataset with query_pipeline applied (same size as mask)
         get_probabilities (Function): 
             Dataset -> **kwargs -> ndarray [n_samples, n_outputs, n_iterations].
         heuristic (Heuristic):  Heuristic from baal.active.heuristics.
@@ -31,6 +33,7 @@ class ActiveLearningLoop:
     def __init__(
         self,
         dataset: ActiveLearningDataset,
+        query_dataset: torchdata.Dataset, 
         get_probabilities: Callable,
         heuristic: AbstractHeuristic = Random(),
         configs: dict = {},
@@ -39,6 +42,7 @@ class ActiveLearningLoop:
     ):
 
         self.dataset = dataset 
+        self.query_dataset = query_dataset
         self.get_probabilities = get_probabilities
         self.heuristic = heuristic
         self.max_sample = max_sample
@@ -72,15 +76,21 @@ class ActiveLearningLoop:
 
     def update_pixel_labelled_pool(self):
 
-        new_pixel_map = self.get_probabilities(self.dataset, self.heuristic, **self.kwargs)
-
-        if not np.any(new_pixel_map): 
-            return False
+        query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
+        
+        # Return False if machine rank != 0
+        # if not np.any(query_pixel_map): 
+        #     return False
             
-        new_pixel_map = new_pixel_map[:len(self.dataset.masks)] 
-        self.dataset.masks = np.logical_or(self.dataset.masks, new_pixel_map)
-        self.num_labelled_pixels += self.sample_settings['query_size']
+        query_pixel_map = query_pixel_map[:len(self.dataset.masks)]
 
+        # Set train_set's mask to be the masks computed on query_set
+        union_mask = np.logical_or(self.dataset.masks, query_pixel_map)
+        rank, world = get_dist_info()
+        if rank == 0:
+            self.dataset.masks = union_mask
+        self.num_labelled_pixels += self.sample_settings['query_size']
+        
         return True
 
     def step(self, pool=None) -> bool:

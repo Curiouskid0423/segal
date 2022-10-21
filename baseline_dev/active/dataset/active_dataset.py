@@ -52,7 +52,8 @@ class ActiveLearningDataset(OracleDataset):
         cfg_data = configs.data
         self.sample_mode = configs.runner.sample_mode
         self.settings = getattr(configs.active_learning.settings, self.sample_mode)
-        
+        self.logger = get_root_logger()
+
         # Initialize labelled pool to be empty
         if labelled is not None:
             self.labelled_map = labelled.astype(int)
@@ -65,12 +66,11 @@ class ActiveLearningDataset(OracleDataset):
         # Reset data augmentation for the unlabelled pool (test pipeline) (image-based sampling)
         self.cfg_data = deepcopy(cfg_data)
         if cfg_data is not None:
-            self.cfg_data['train']['pipeline'] = self.cfg_data['test']['pipeline']
+            self.logger.info("Creating unlabelled pool dataset.")
             self.pool_dataset = build_dataset(self.cfg_data['train'])
        
         self.make_unlabelled = make_unlabelled
         self.can_label = self.check_can_label()
-        self.logger = get_root_logger()
         
         # Constructor of OracleDataset
         super().__init__(self.labelled_map, random_state, last_active_steps)
@@ -120,9 +120,6 @@ class ActiveLearningDataset(OracleDataset):
     @property
     def pool(self):
         """Returns a new Dataset made from unlabelled samples"""
-        # Copy the OracleDataset
-        # pool_dataset = deepcopy(self.dataset)
-
         # Exclude the labelled data
         recovered_index = (~self.labelled).nonzero()[0].flatten()
         # Re-create from self.pool_dataset, which has been applied with test transform
@@ -135,15 +132,15 @@ class ActiveLearningDataset(OracleDataset):
             return True
         return False
 
-    def label_all_with_mask(self):
+    def label_all_with_mask(self, mask_shape):
         """ 
         For pixel-based sampling, all images will be placed in labelled pool initially
-        but only labelled sparsely on randomly selected. 
+        but only labelled sparsely on randomly selected ones. 
         """
+        # Place all images into labelled pool
         self.label(list(range(len(self.dataset))))
 
-        gt_shape = self.dataset[0]['gt_semantic_seg'].data.numpy().squeeze().shape
-        h, w = gt_shape
+        h, w = mask_shape
         N = len(self.dataset)
         init_pixels = self.settings['initial_label_pixels']
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"

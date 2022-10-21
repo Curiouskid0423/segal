@@ -28,6 +28,7 @@ from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
 from mmseg_custom import train_al_segmentor
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
     parser.add_argument('config', help='train config file path')
@@ -123,7 +124,7 @@ def main():
 
     # Set ignore_index, in the case of pixel-based sampling, from
     # cfg.active_learning to cfg.model before instantiation
-    if cfg.runner.sample_mode == 'pixel':
+    if cfg.runner.type=='ActiveLearningRunner' and cfg.runner.sample_mode == 'pixel':
         ignore_index = cfg.active_learning.settings.pixel.ignore_index
         setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
 
@@ -136,7 +137,6 @@ def main():
 
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:
-        # update configs according to CLI args if args.work_dir is not None
         cfg.work_dir = args.work_dir
     elif cfg.get('work_dir', None) is None:
         # use config filename as default work_dir if cfg.work_dir is None
@@ -219,16 +219,21 @@ def main():
     # logger.info(model)
 
     """ PART 3. Dataset """
-    datasets = [build_dataset(cfg.data.train)]
+    datasets = []
+    assert all([mode in ['train', 'val', 'query'] for (mode, _) in cfg.workflow]), \
+        "Workflow has to be either train, val, or query."
 
-    if len(cfg.workflow) == 2:
-        val_dataset = copy.deepcopy(cfg.data.val)
-        val_dataset.pipeline = cfg.data.train.pipeline
-        datasets.append(build_dataset(val_dataset))
-        
+    for mode, _ in cfg.workflow:
+        options = ['train', 'val', 'query']
+        if mode not in options:
+            raise ValueError(f"Workflow element needs to be one of {options} but got {mode}.")
+        data_cfg = getattr(cfg.data, mode)
+        if mode == 'val':
+            data_cfg = copy.deepcopy(data_cfg)
+            data_cfg.pipeline = cfg.data.train.pipeline
+        datasets.append(build_dataset(data_cfg))
+
     if cfg.checkpoint_config is not None:
-        # save mmseg version, config file content and class names 
-        # in checkpoints as meta data
         cfg.checkpoint_config.meta = dict(
             mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
             config=cfg.pretty_text,
