@@ -6,7 +6,6 @@ Equivalent to mmseg/apis/train.py
 import copy
 from argparse import Namespace
 import torch 
-import torch.optim as optim
 import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -17,8 +16,8 @@ from mmseg.models import BaseSegmentor
 from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
-from baseline_dev.runner import *
-from baseline_dev.hooks import *
+from baseline.runner import *
+from baseline.hooks import *
 # from mmcv.parallel.collate import collate as mmcv_collate_fn
 
 def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp):
@@ -103,8 +102,32 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool):
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
     return model
 
+def setup_dataloaders(cfg: Namespace, distributed: bool, datasets):
+    """
+    To be compatible with EpochBasedRunner, pass in dataloaders instead of dataset 
+    objects since dataloaders don't need to be reinitialized during training.
+    """
+
+    loader_cfg = dict(
+        num_gpus=len(cfg.gpu_ids),
+        dist=distributed,
+        seed=cfg.seed,
+        drop_last=True)
+
+    # The overall dataloader settings
+    loader_cfg.update({
+        k: v
+        for k, v in cfg.data.items() if k not in [
+            'train', 'val', 'query', 'test', 
+            'train_dataloader', 'val_dataloader', 
+            'query_dataloader', 'test_dataloader'
+        ]
+    })
+    train_loader_cfg = {**loader_cfg, **cfg.data.get('train_dataloader', {})}
+    return [build_dataloader(ds, **train_loader_cfg) for ds in datasets]
+
 def train_al_segmentor(
-    model, datasets, cfg, distributed=False,
+    model, datasets, cfg: Namespace, distributed=False,
     validate=False, timestamp=None, meta=None):
     
     logger = get_root_logger(cfg.log_level)
@@ -131,6 +154,9 @@ def train_al_segmentor(
 
     if cfg.runner.type == 'ActiveLearningRunner':
         runner.run(datasets, configs=cfg)
+    elif cfg.runner.type == 'EpochBasedRunner':
+        data_loaders = setup_dataloaders(cfg, distributed, datasets)
+        runner.run(data_loaders, configs=cfg, workflow=cfg.workflow)
     else:
         raise NotImplementedError(
-            f"Supports for EpochBasedRunner and IterBasedRunners are still in development. Please use ActiveLearningRunner for the time being.")
+            f"Supports for IterBasedRunner is still in development. Please use ActiveLearningRunner for the time being.")

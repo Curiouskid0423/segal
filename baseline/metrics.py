@@ -1,6 +1,10 @@
 import torch
 import numpy as np
 
+"""
+File from BAAL. Currently not used in other parts of this repo.
+"""
+
 class Metrics:
     """
     metric is an abstract class.

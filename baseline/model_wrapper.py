@@ -17,8 +17,8 @@ from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
 from mmseg.utils import get_root_logger
 from mmseg.datasets import build_dataloader
-from baseline_dev.active.dataset.active_dataset import ActiveLearningDataset
-from baseline_dev.active.heuristics import AbstractHeuristic
+from baseline.active.dataset.active_dataset import ActiveLearningDataset
+from baseline.active.heuristics import AbstractHeuristic
 # from torch.utils.data.dataloader import default_collate
 # from mmcv.engine import collect_results_cpu
 
@@ -157,6 +157,7 @@ class ModelWrapper:
             prog_bar = mmcv.ProgressBar(len(dataset))
 
         for idx, data_batch in enumerate(test_loader):
+
             if self.sample_mode == 'pixel':
                 data_batch, mask = data_batch
                 
@@ -197,8 +198,6 @@ class ModelWrapper:
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
         
-        # FIXME: (top priority task) Verify that `np.zeros` hack does not affect DataLoader accuracy 
-        
         if len(all_results) > 0:
             return all_results
         elif self.sample_mode == 'pixel':
@@ -206,7 +205,6 @@ class ModelWrapper:
             return np.zeros(shape=(len(dataset), ds[0], ds[1]))
         else:
             return np.zeros(len(dataset))
-        # return all_results if len(all_results) > 0 else np.zeros(len(dataset))
 
     def extract_query_indices(self, uc_map):
         """

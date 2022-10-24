@@ -26,7 +26,7 @@ from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
-from mmseg_custom import train_al_segmentor
+from baseline.utils.train import train_al_segmentor
 
 
 def parse_args():
@@ -225,9 +225,10 @@ def main():
 
     for mode, _ in cfg.workflow:
         data_cfg = getattr(cfg.data, mode)
-        # if mode == 'val':
-        #     data_cfg = copy.deepcopy(data_cfg)
-        #     data_cfg.pipeline = cfg.data.train.pipeline
+        # make sure to use train pipeline cuz test pipeline does not load ground truth
+        if mode == 'val':
+            data_cfg = copy.deepcopy(data_cfg)
+            data_cfg.pipeline = cfg.data.train.pipeline
         datasets.append(build_dataset(data_cfg))
 
     if cfg.checkpoint_config is not None:
@@ -252,8 +253,6 @@ def main():
         timestamp=timestamp,
         meta=meta
         )
-
-
 
 
 if __name__ == '__main__':

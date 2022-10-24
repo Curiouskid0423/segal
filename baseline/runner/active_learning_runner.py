@@ -20,10 +20,10 @@ from mmcv.runner.builder import RUNNERS
 from mmseg.models import build_segmentor
 from mmseg.datasets import build_dataloader
 from mmseg.datasets.pipelines import Compose
-from baseline_dev.active.active_loop import ActiveLearningLoop
-from baseline_dev.active.dataset import ActiveLearningDataset
-from baseline_dev.model_wrapper import ModelWrapper
-from baseline_dev.active import get_heuristics
+from baseline.active.active_loop import ActiveLearningLoop
+from baseline.active.dataset import ActiveLearningDataset
+from baseline.model_wrapper import ModelWrapper
+from baseline.active import get_heuristics
 
 @RUNNERS.register_module()
 class ActiveLearningRunner(BaseRunner):
@@ -65,18 +65,22 @@ class ActiveLearningRunner(BaseRunner):
         heuristic = get_heuristics(
             self.sample_mode, cfg.active_learning.heuristic, cfg.active_learning.shuffle_prop)
 
+        self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
+        self.get_initial_labels(self.sample_mode, settings, dataset)
+        self.get_initial_labels(self.sample_mode, settings, query_dataset)
+
+        # Train and Query dataset masks have to be consistent
+        dataset.masks = deepcopy(query_dataset.masks)
+    
         self.active_learning_loop = ActiveLearningLoop(
             dataset = dataset, 
             query_dataset= query_dataset,
             get_probabilities = self.wrapper.predict_on_dataset, 
             heuristic = heuristic,
-            configs = cfg,
+            configs = cfg,      
             use_cuda = torch.cuda.is_available(),
             collate_fn = mmcv_collate_fn
         )
-        self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
-        self.get_initial_labels(self.sample_mode, settings, dataset)
-        self.get_initial_labels(self.sample_mode, settings, query_dataset)
 
         # Set up _max_iters based on `workflow` config
         batch_size = cfg.data.samples_per_gpu * len(cfg.gpu_ids)
@@ -93,6 +97,9 @@ class ActiveLearningRunner(BaseRunner):
         # Adjustment for "Resize"
         if scale != None:
             mask = TF.resize(mask.unsqueeze(1), scale, IM.NEAREST).squeeze()
+
+        # FIXME: Add adjustment for "RandomCrop" transformation
+
         return mask
 
     def run_iter(self, data_batch, train_mode, **kwargs):
@@ -198,11 +205,13 @@ class ActiveLearningRunner(BaseRunner):
         # Reset weights (backbone, neck, decode_head)
         if "DataParallel" in self.model.__class__.__name__:
             self.recursively_set_is_init(self.model.module, False)
-            # FIXME: re-init fails in multi-gpu setting when loading pre-trained weights
             self.model.module.init_weights()
         else:
             self.recursively_set_is_init(self.model, False)
             self.model.init_weights()
+
+        if hasattr(self.cfg_al, "visualize"):
+            self.active_learning_loop.visualize()
 
         self.logger.info("Process sleep for 3 seconds.")
         time.sleep(3) # prevent deadlock before step() returns from all devices

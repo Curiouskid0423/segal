@@ -1,4 +1,5 @@
 # Edits during baseline development
+viz/
 pretrained_ckpts/
 wandb/
 baseline_dev/playground.py

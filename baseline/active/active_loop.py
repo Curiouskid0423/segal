@@ -5,12 +5,17 @@ Code mostly similar to BAAL.
 """
 from typing import Callable
 import numpy as np
+import os
+import os.path as osp
 import torch
 import torch.utils.data as torchdata
 from mmseg.utils import get_root_logger
 from mmcv.runner import get_dist_info
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
+from PIL import Image
+
+CWD = os.getcwd()
 
 class ActiveLearningLoop:
 
@@ -54,6 +59,15 @@ class ActiveLearningLoop:
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
 
+        if hasattr(configs.active_learning, 'visualize'):
+            assert configs.active_learning.visualize.size > 0
+            assert hasattr(configs.active_learning.visualize, 'dir')
+            vis_length = configs.active_learning.visualize.size
+            self.vis_path = osp.join(CWD, configs.active_learning.visualize.dir)
+            os.makedirs(self.vis_path, exist_ok=True)
+            self.vis_indices = [np.random.randint(0, len(self.dataset)) for _ in range(vis_length)]
+            self.round = 0
+            self.visualize()
         self.kwargs = kwargs
 
     def update_image_labelled_pool(self, dataset, indices):
@@ -77,11 +91,6 @@ class ActiveLearningLoop:
     def update_pixel_labelled_pool(self):
 
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
-        
-        # Return False if machine rank != 0
-        # if not np.any(query_pixel_map): 
-        #     return False
-            
         query_pixel_map = query_pixel_map[:len(self.dataset.masks)]
 
         # Set train_set's mask to be the masks computed on query_set
@@ -135,3 +144,32 @@ class ActiveLearningLoop:
             raise ValueError(f"Sample mode {self.sample_mode} is not supported.")
 
         return False
+
+    def visualize(self):
+        """
+        Visualize the selected pixels on randomly selected images.
+        """
+
+        rank, _ = get_dist_info()
+
+        if rank == 0:
+            epoch_vis_dir = osp.join(self.vis_path, f"round{self.round}")
+            os.makedirs(epoch_vis_dir, exist_ok=True)
+            self.logger.info("Saving visualization...")
+            for v in self.vis_indices:
+                # normalization configs
+                norm_cfg = ori['img_metas'].data['img_norm_cfg']
+                mean, std = norm_cfg['mean'][None, None, :], norm_cfg['std'][None, None, :]
+                # original image (256x512 for CityScapes) and corresponding mask
+                ori, mask = self.dataset.get_raw(v), self.dataset.masks[v]
+                ori = ori['img'].data.permute(1,2,0).cpu().numpy()
+                ori = (ori * std + mean).astype(np.uint8)
+                
+                h, w = mask.shape
+                result = Image.new('RGB', (w*2, h))
+                ori = Image.fromarray(ori).resize((w, h))
+                result.paste(im=ori, box=(0,0))
+                result.paste(im=Image.fromarray(mask), box=(w, 0))
+                result.save(osp.join(epoch_vis_dir, f"{v}.jpg"))
+                
+            self.round += 1
