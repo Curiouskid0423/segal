@@ -11,6 +11,7 @@ import torch
 import torch.utils.data as torchdata
 from mmseg.utils import get_root_logger
 from mmcv.runner import get_dist_info
+from mmcv.parallel import DataContainer
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 from PIL import Image
@@ -62,12 +63,15 @@ class ActiveLearningLoop:
         if hasattr(configs.active_learning, 'visualize'):
             assert configs.active_learning.visualize.size > 0
             assert hasattr(configs.active_learning.visualize, 'dir')
+            self.vis_settings = configs.active_learning.visualize
             vis_length = configs.active_learning.visualize.size
             self.vis_path = osp.join(CWD, configs.active_learning.visualize.dir)
             os.makedirs(self.vis_path, exist_ok=True)
             self.vis_indices = [np.random.randint(0, len(self.dataset)) for _ in range(vis_length)]
             self.round = 0
+
             self.visualize()
+        
         self.kwargs = kwargs
 
     def update_image_labelled_pool(self, dataset, indices):
@@ -145,6 +149,35 @@ class ActiveLearningLoop:
 
         return False
 
+    def vis_in_comparison(self, file_name: str, ori: np.ndarray, mask: np.ndarray):
+        h, w = mask.shape
+        result = Image.new('RGB', (w*2, h))
+        ori = Image.fromarray(ori).resize((w, h))
+        result.paste(im=ori, box=(0,0))
+        result.paste(im=Image.fromarray(mask), box=(w, 0))
+        result.save(file_name)
+
+    def vis_in_overlay(self, file_name: str, ori: np.ndarray, mask: np.ndarray):
+        h, w = mask.shape
+        ori = Image.fromarray(ori, 'RGB').resize((w, h))
+        vis_mask = mask.astype(np.uint8)[..., None].repeat(3, axis=-1)
+        vis_mask[vis_mask == 1] = 255 # (256, 512, 3) RGB image
+        vis_mask = Image.fromarray(vis_mask, 'RGB')
+        result = Image.blend(ori, vis_mask, alpha=0.5)
+        result.save(file_name)
+        
+    def revert_transforms(self, original_image, img_metas):
+        # normalization configs
+        norm_cfg = img_metas['img_norm_cfg']
+        mean, std = norm_cfg['mean'][None, None, :], norm_cfg['std'][None, None, :]
+        ori = original_image['img'].data.permute(1,2,0).cpu()
+        # Un-normalize original image tensor and convert to NumPy
+        if ('flip' in img_metas) and img_metas['flip']:
+            axis = [1] if (img_metas['flip_direction'] == 'horizontal') else [0]
+            ori = ori.flip(dims=axis) # flip the image back for display
+        ori = (ori.numpy() * std + mean).astype(np.uint8)
+        return ori
+                
     def visualize(self):
         """
         Visualize the selected pixels on randomly selected images.
@@ -157,19 +190,14 @@ class ActiveLearningLoop:
             os.makedirs(epoch_vis_dir, exist_ok=True)
             self.logger.info("Saving visualization...")
             for v in self.vis_indices:
-                # normalization configs
-                norm_cfg = ori['img_metas'].data['img_norm_cfg']
-                mean, std = norm_cfg['mean'][None, None, :], norm_cfg['std'][None, None, :]
                 # original image (256x512 for CityScapes) and corresponding mask
                 ori, mask = self.dataset.get_raw(v), self.dataset.masks[v]
-                ori = ori['img'].data.permute(1,2,0).cpu().numpy()
-                ori = (ori * std + mean).astype(np.uint8)
+                ori = self.revert_transforms(ori, ori['img_metas'].data)
+                file_name = osp.join(epoch_vis_dir, f"{v}.png")
                 
-                h, w = mask.shape
-                result = Image.new('RGB', (w*2, h))
-                ori = Image.fromarray(ori).resize((w, h))
-                result.paste(im=ori, box=(0,0))
-                result.paste(im=Image.fromarray(mask), box=(w, 0))
-                result.save(osp.join(epoch_vis_dir, f"{v}.jpg"))
-                
+                if hasattr(self.vis_settings, "overlay") and self.vis_settings.overlay:
+                    self.vis_in_overlay(file_name, ori, mask)
+                else:
+                    self.vis_in_comparison(file_name, ori, mask)
+
             self.round += 1
