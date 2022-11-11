@@ -82,11 +82,12 @@ class ActiveLearningRunner(BaseRunner):
             self.sample_mode, cfg.active_learning.heuristic, cfg.active_learning.shuffle_prop)
 
         self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
-        self.get_initial_labels(self.sample_mode, settings, dataset)
-        self.get_initial_labels(self.sample_mode, settings, query_dataset)
+        self.get_initial_labels(settings, dataset)
+        self.get_initial_labels(settings, query_dataset, dataset_type='query')
 
         # Train and Query dataset masks have to be consistent
-        dataset.masks = deepcopy(query_dataset.masks)
+        if self.sample_mode != 'image':
+            dataset.masks = deepcopy(query_dataset.masks)
     
         self.active_learning_loop = ActiveLearningLoop(
             dataset = dataset, 
@@ -142,7 +143,7 @@ class ActiveLearningRunner(BaseRunner):
             data_batch, mask = data_batch
             ground_truth = data_batch['gt_semantic_seg'].data[0]
             mask = self.adjust_mask(
-                mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth.squeeze()[0].size())
+                mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth[0].squeeze().size())
             
             assert hasattr(self, 'cfg_al')
             ground_truth.flatten()[~mask.flatten()] = self.cfg_al.settings.pixel.ignore_index
@@ -272,7 +273,7 @@ class ActiveLearningRunner(BaseRunner):
         self.logger.info("Re-initialized weights and lr after sampling.")
         return True
         
-    def get_initial_labels(self, sample_mode: str, sample_settings: dict, active_set: ActiveLearningDataset):
+    def get_initial_labels(self, sample_settings: dict, active_set: ActiveLearningDataset, dataset_type: str = 'train'):
         """
         Create initial labels randomly given the sample_mode and the ActiveLearningDataset object.
         
@@ -281,14 +282,21 @@ class ActiveLearningRunner(BaseRunner):
             sample_settings (dict):             a dict of settings for the specified sample_mode, specified in config file.
             active_set (ActiveLearningDataset): dataset instance to be labelled.
         """
-        
-        self.logger.info(f"Sample mode: {sample_mode}")
-        if sample_mode == 'image':
-            active_set.label_randomly(sample_settings['initial_pool'])
+        assert dataset_type in ['query', 'train']
+        self.logger.info(f"Sample mode: {self.sample_mode}")
+        if self.sample_mode == 'image':
+            # active_set.label_randomly(sample_settings['initial_pool'])
+            if dataset_type == 'train':
+                active_set.label_randomly(sample_settings['initial_pool'])
+            else:
+                # FIXME: Label ALL images for query 
+                total_size = active_set.num_labelled + active_set.num_unlabelled
+                active_set.label_randomly(n=total_size)
             self.logger.info(
                 f"ActiveLearningDataset created with initial pool of {sample_settings['initial_pool']}.")
-        elif sample_mode == 'pixel':
+        elif self.sample_mode == 'pixel':
             active_set.label_all_with_mask(mask_shape=self.mask_size)
+            
         else:
             raise ValueError(
                 "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")

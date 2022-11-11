@@ -137,13 +137,13 @@ class ActiveLearningLoop:
         Sample and annotate from the pool at each step
         
         Return: 
-        True if successfully stepped, False if not (thus stop traing)
+        True if successfully stepped, False if not (thus stop training)
         """
-        
-        if self.sample_mode == 'image':
-            pool = self.dataset.pool
-            assert pool is not None, "self.dataset.pool should not be None"
+        if pool == None:
+             pool = self.dataset.pool
+        assert pool is not None, "self.dataset.pool should not be None"
 
+        if self.sample_mode == 'image':
             if len(pool) > 0:
                 # Whether max sample size is capped
                 if self.max_sample != -1 and self.max_sample < len(pool):

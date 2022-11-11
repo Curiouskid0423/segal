@@ -172,7 +172,7 @@ class ModelWrapper:
                 else:
                     ext_img_meta = data_batch['img_metas'][0]
 
-                outputs = model.module.encode_decode(ext_img, ext_img_meta) #.half() 
+                outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs)
                 
                 # Cannot store the entire pixel-level map due to memory shortage.
