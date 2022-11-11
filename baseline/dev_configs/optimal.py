@@ -1,4 +1,4 @@
-QUERY_EPOCH = 40 # PixelPick setting is 50 epochs
+QUERY_EPOCH = 50 # PixelPick setting is 50 epochs
 QUERY_SIZE = 10
 SAMPLE_ROUNDS = 10
 GPU = 2
@@ -26,7 +26,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='al_baseline',
-                name=f'(V100)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry{QUERY_SIZE}_e{QUERY_EPOCH}_lr1e-4_wd0_{HEURISTIC}',
+                name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry{QUERY_SIZE}_e{QUERY_EPOCH}_lr1e-4_wd0_{HEURISTIC}',
             )
         )
     ]
@@ -40,17 +40,17 @@ active_learning = dict(
             initial_pool=100, 
             query_size=10
         ),
-        pixel = dict(
-            initial_label_pixels=QUERY_SIZE,
-            sample_threshold=5,
-            query_size=QUERY_SIZE,
-            sample_evenly=True,     # FIXME: ignored for the current development phase
-            ignore_index=255            
+        pixel = dict(      
+            sample_threshold=5,              # per image, only sample from top `threshold`%
+            query_size=QUERY_SIZE,           # query size (in pixel) at each step 
+            initial_label_pixels=QUERY_SIZE, # of pixels labeled randomly at the 1st epoch
+            sample_evenly=True,              # FIXME: ignored for the current development phase
+            ignore_index=255                 # any value other than 255 fails due to seg_pad_val in Pad transform
         ),
     ),
     heuristic=HEURISTIC,
-    shuffle_prop=0.0,               # FIXME: ignored for the current development phase
-    )
+    shuffle_prop=0.0,                        # FIXME: ignored for the current development phase
+)
 
 """ ===== Workflow and Runtime configs ===== """
 workflow = [('train', QUERY_EPOCH), ('query', 1)] 

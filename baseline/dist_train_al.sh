@@ -2,12 +2,12 @@ CONFIG=$1
 GPUS=$2
 NNODES=${NNODES:-1}
 NODE_RANK=${NODE_RANK:-0}
-PORT=${PORT:-29501}
+PORT=${PORT:-29502}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
 # NOTE: if module cannot be found, export PYTHONPATH to current project dir.
 # e.g. `export PYTHONPATH="{$PYTHONPATH}:/home/yutengli/workspace/spring22/al_seg/"`
-CUDA_VISIBLE_DEVICES=2,3,4,5,6,7,8,9 \
+CUDA_VISIBLE_DEVICES=6,7,8,9 \
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
 python -m torch.distributed.launch \
     --nnodes=$NNODES \

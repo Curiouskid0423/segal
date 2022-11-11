@@ -35,13 +35,20 @@ baseline/
     `-- active_learning_runner.py
 ```
 #### Development Notes
-- **2022.10.20** "Rescale" pipeline implemented successfully, and was able to reproduce (approximately) PixelPick result with a different set of hyperparameter (**mean IoU of 61**). Added feature for "visualization of selected pixels". Solved the inconsistent masks between Train and Query set problem, which previously led to non-deterministic sampling results.
+- **2022.11.11** Provably solved the masking indeterministic behavior by writing a common pickle file in a temporary folder `queries_save_dir`. With the same set of hyperparameters (did not tune much), the model achieves 61.2 mean IoU with 50 epochs on Cityscapes. Full reproduction run of Pixel detailed below.
+    | # labelled pixels per img (% annotation)  | mean IoU |
+    | ------------- | ------------- |
+    | 20 (0.015)  | 56.01  |
+    | 40 (0.031)  | 58.33  |
+    | 60 (0.046)  | 59.2  |
+    | 80 (0.061)  | 61.18  |
+    | 100 (0.076) | **61.2**  |
+
+- **2022.10.20** "Rescale" pipeline implemented successfully, and was able to reproduce (approximately) PixelPick result with a different set of hyperparameter (mean IoU of 61). Added feature for "visualization of selected pixels". 
 - **2022.09.02** Resolved multiple bugs: (1) weights re-init at each round (2) lr scheduler restart at each round (3) test pipeline applied during sampling instead of train pipeline. 
 
 
 #### Action Items
-- Enable visualization of the sampled pixels at each round on a segmentation map.
 - Implement `RandomCrop` augmentation.
 - Integrate `MMSelfSup` to allow SSL features in active learning query. 
-- Add documentation to essential functions and "how to use config file".
 - Refactor as needed to accommodate the case where we gradually increase *BOTH labeled pixels and images.*

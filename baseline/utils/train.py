@@ -9,7 +9,7 @@ import torch
 import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
-from mmcv.runner import HOOKS, build_optimizer, build_runner
+from mmcv.runner import HOOKS, BaseRunner, build_optimizer, build_runner
 from mmcv.utils import build_from_cfg
 from mmseg import digit_version
 from mmseg.models import BaseSegmentor
@@ -20,7 +20,17 @@ from baseline.runner import *
 from baseline.hooks import *
 # from mmcv.parallel.collate import collate as mmcv_collate_fn
 
-def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp):
+def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp) -> BaseRunner:
+    """
+    Set up a runner instance and register its training hooks.
+
+    Args:
+        cfg (NameSpace):        config file provided by user and processed with MMCV
+        model (BaseSegmentor):  the segmentation backbone
+        optimizer (torch.optim.Optimizer): pytorch optimizer created by build_optimizer()
+        logger:                 logger instance from MMCV
+        meta, timestamp:        miscellaneous arguments from MMCV default configuration
+    """
 
     if cfg.get('runner') is None:
         cfg.runner = {'type': 'IterBasedRunner', 'max_iters': cfg.total_iters}
@@ -54,6 +64,16 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
     return runner
 
 def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
+    """
+    Set up hooks for validation use and custom hooks (e.g. WandB).
+
+    Args:
+        runner (BaseRunner):    runner instance from MMCV, created with setup_runner() call
+        cfg (NameSpace):        config file provided by user and processed with MMCV
+        validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
+        distributed (bool):     boolean to indicate whether to use distributed training
+    """
+
     # FIXME: make sure that ignore_index in pixel-sampling works with validation set too
     """Set up eval / validate hooks"""
     if validate:
@@ -85,7 +105,17 @@ def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
             hook = build_from_cfg(hook_cfg, HOOKS)
             runner.register_hook(hook, priority=priority)
 
-def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool):
+def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torch.nn.Module:
+    """
+    Add DataParallel wrapper around a model instance depending on whether
+    using distributed training or not.
+
+    Args:
+        cfg (Namespace):        config file provided by user and processed with MMCV
+        model (BaseSegmentor):  the segmentation backbone
+        distributed (bool):     boolean to indicate whether to use distributed training
+    """
+    
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in
@@ -104,8 +134,15 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool):
 
 def setup_dataloaders(cfg: Namespace, distributed: bool, datasets):
     """
-    To be compatible with EpochBasedRunner, pass in dataloaders instead of dataset 
-    objects since dataloaders don't need to be reinitialized during training.
+    Create a list of dataloaders given datasets. This method is only 
+    compatible with EpochBasedRunner (not ActiveLearningRunner). The 
+    default MMCV code passes in dataloaders instead of dataset objects 
+    since dataloaders don't need to be reinitialized during training.
+
+    Args:
+        cfg (NameSpace):        config file provided by user and processed with MMCV
+        distributed (bool):     boolean to indicate whether to use distributed training
+        datasets (List):  list of datasets   
     """
 
     loader_cfg = dict(
@@ -129,6 +166,18 @@ def setup_dataloaders(cfg: Namespace, distributed: bool, datasets):
 def train_al_segmentor(
     model, datasets, cfg: Namespace, distributed=False,
     validate=False, timestamp=None, meta=None):
+
+    """
+    Trains a Segmentor (segmentation model) in Active Learning setting given the cfg file.
+
+    Args:
+        model (BaseSegmentor):  the segmentation backbone
+        datasets (List):  list of datasets   
+        cfg (Namespace):        config file provided by user and processed with MMCV
+        distributed (bool):     boolean to indicate whether to use distributed training
+        validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
+        timestamp, meta:        default MMCV arguments. 
+    """
     
     logger = get_root_logger(cfg.log_level)
 

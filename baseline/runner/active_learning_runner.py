@@ -11,11 +11,11 @@ import mmcv
 import numpy as np
 import time
 from copy import deepcopy
-from typing import Union, List, Dict
+from typing import Union, List
 from argparse import Namespace
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
-from mmcv.runner import BaseRunner, BaseModule, get_host_info, save_checkpoint
+from mmcv.runner import BaseRunner, BaseModule, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
 from mmseg.models import build_segmentor
 from mmseg.datasets import build_dataloader
@@ -28,14 +28,10 @@ from baseline.active import get_heuristics
 @RUNNERS.register_module()
 class ActiveLearningRunner(BaseRunner):
 
-    """ 
-    Referenced epoch_runner.py file.
-
-    Scenario
-    >>  runner.run(datasets, cfg.workflow)
-        Inside run, every K epochs (hyperparam) we update query_size samples.
-        This can be done by stepping AL_Loop every K epochs. Then change the 
-        DataLoader accordingly. 
+    """ Summary:
+    A runner class created to iteratively modify dataloader to accomodate active learning 
+    experiments in different settings (image, pixel, region and more). Code adpated from 
+    epoch_runner.py file in MMCV codebase.
     """
 
     def __init__(
@@ -52,15 +48,35 @@ class ActiveLearningRunner(BaseRunner):
         self.sample_mode = sample_mode
         self.sample_rounds = sample_rounds
         self.sampling_terminate = False
+
+        """ debug settings to expedite experiments """
+        self.debug = False
+        self.debug_dataset_size = 1000 # 1000 = 33% of the training split
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 
             max_iters, max_epochs=query_epochs)
+
+        self.logger.info(f"Using debug dataset size: {self.debug_dataset_size} images, for training")
         
 
     def init_active_variables(
         self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
+        """
+        Helper function to initialize variables for active learning experiments such as 
+        ModelWrapper and ActiveLearningLoop. Also updates self._max_iters to be accurate in display.
+
+        Args:
+            dataset (ActiveLearningDataset):        Dataset with mutatable masks for training
+            query_dataset (ActiveLearningDataset):  Dataset with mutatable masks for query
+                                                    (Query pipeline transformations)
+            settings (dict):                        Dictionary for sampling settings as specified in config file
+            cfg (Namespace):                        Full config object for downstream method uses later.
+        """
         
+        self.dataset = dataset
+        self.query_dataset = query_dataset
+
         self.wrapper = ModelWrapper(self.model, cfg)
         heuristic = get_heuristics(
             self.sample_mode, cfg.active_learning.heuristic, cfg.active_learning.shuffle_prop)
@@ -88,6 +104,17 @@ class ActiveLearningRunner(BaseRunner):
         self._max_iters = self.sample_rounds * self.query_epochs * dataloader_size
 
     def adjust_mask(self, mask: torch.Tensor, meta: List, scale=None):
+        """
+        Masks are created in the size of original input (e.g. 256x512 or 1024x2048), and therefore 
+        requires adjustments during training transformations such as RandomFlip or Resizing. 
+        This method takes a list of meta information and edits correspondingly.
+
+        Args:
+            mask (torch.Tensor):    Mask object to be edited
+            meta (List):            Meta-information containing the transformation details
+            scale (bool):           A boolean indicating whether RandomResize / Scaling is applied
+        """
+        
         for i in range(len(mask)):
             # Adjustment for "RandomFlip"
             if 'flip' in meta[i] and meta[i]['flip']:
@@ -103,8 +130,13 @@ class ActiveLearningRunner(BaseRunner):
         return mask
 
     def run_iter(self, data_batch, train_mode, **kwargs):
-
-        """ Either train, val or custom batch processing """
+        """
+        Run an iteration of training.
+        
+        Args:
+            data_batch:         MMCV compatible data batch loaded from the dataloader
+            train_mode (bool):  A boolean to indicate whether the current phase is in training mode
+        """
             
         if train_mode and self.sample_mode == 'pixel':
             data_batch, mask = data_batch
@@ -134,9 +166,9 @@ class ActiveLearningRunner(BaseRunner):
 
     def train(self, data_loader, **kwargs):
 
-        def pixel_mask_check(data_batch):
+        def pixel_mask_check(data_batch, index=0):
             true_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
-            self.logger.info(f"Mask check: mask's True value count = {true_count}")
+            self.logger.info(f"Mask[{index}] check: mask's True value count = {true_count}")
             return True
 
         self.model.train()
@@ -145,11 +177,18 @@ class ActiveLearningRunner(BaseRunner):
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
 
-        mask_count_var = False  # FIXME: debug variable
+        mask_count_var = 0  # FIXME: debug variable
+
         for i, data_batch in enumerate(self.data_loader):
-            # if i >= 10: break
-            if not mask_count_var and self.sample_mode == 'pixel':
-                mask_count_var = pixel_mask_check(data_batch)
+            # debug setting: truncate dataset
+            _, world = get_dist_info()
+            debug_data_limit = self.debug_dataset_size // (len(data_batch) * world)
+            if self.debug and i >= debug_data_limit:
+                break
+            # mask check to verify that all devices have the right number of masks
+            if mask_count_var < 8 and self.sample_mode == 'pixel':
+                pixel_mask_check(data_batch, i)
+                mask_count_var += 1
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -182,6 +221,14 @@ class ActiveLearningRunner(BaseRunner):
             self.sampling_terminate = True
         
     def recursively_set_is_init(self, model: BaseModule, value: bool):
+        """
+        Recursively re-initialize all parameters using MMCV APIs.
+
+        Args:
+            model (BaseModule):     Model backbone to be initialized.
+            value (bool):           boolean value to reset model._is_init
+        """
+
         model._is_init = value
         for m in model.children():
             if hasattr(m, '_is_init'):
@@ -189,7 +236,14 @@ class ActiveLearningRunner(BaseRunner):
                 self.recursively_set_is_init(model=m, value=value)
 
     def active_sampling(self, sample_mode: str):
+        """
+        Given the sample_mode (image or pixel), perform a round of active learning sampling, and re-initialize
+        the backbone recursively before a new round of training begins.
 
+        Args:
+            sample_mode (str):  a string specifying whether `image` or `pixel` mode is desired    
+        """
+        
         if not self.active_learning_loop.step():
             self.logger.info("ActiveLearningLoop returns False, stopping the experiment.")
             return False 
@@ -219,6 +273,15 @@ class ActiveLearningRunner(BaseRunner):
         return True
         
     def get_initial_labels(self, sample_mode: str, sample_settings: dict, active_set: ActiveLearningDataset):
+        """
+        Create initial labels randomly given the sample_mode and the ActiveLearningDataset object.
+        
+        Args:
+            sample_mode (str):                  specifies the sampling mode. Currently supports `image` and `pixel`.
+            sample_settings (dict):             a dict of settings for the specified sample_mode, specified in config file.
+            active_set (ActiveLearningDataset): dataset instance to be labelled.
+        """
+        
         self.logger.info(f"Sample mode: {sample_mode}")
         if sample_mode == 'image':
             active_set.label_randomly(sample_settings['initial_pool'])
@@ -230,14 +293,27 @@ class ActiveLearningRunner(BaseRunner):
             raise ValueError(
                 "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
 
-    def create_active_sets(self, datasets, configs):
+    def create_active_sets(self, datasets: List[Dataset], configs: Namespace) -> List[Dataset]:
+        """
+        Converts a list of datasets (torch.utils.data.Dataset) into ActiveLearningRunner compatible datasets
+        given the workflow from config object. Specifically, convert datasets in `train` and `query` stages
+        into ActiveLearningDataset instances.
+
+        Args:
+            datasets(list):     list of datasets
+            configs(Namespace): config file provided by user and processed with MMCV
+        """
         workflow = configs.workflow
         active_sets = deepcopy(datasets)
         train_idx, query_idx = None, None
         for i, flow in enumerate(workflow):
             mode, epochs = flow 
-            if mode == 'val': continue
+            if mode == 'val': 
+                continue
+
+            # Instantiate both Train set and Query set
             active_sets[i] = ActiveLearningDataset(datasets[i], configs=configs)
+            
             if mode == 'train':
                 assert self.query_epochs % epochs == 0, \
                     f"Train epoch in `workflow` has to be a factor of `query_epochs` but got {epochs} and {self.query_epochs}."
@@ -256,9 +332,18 @@ class ActiveLearningRunner(BaseRunner):
 
         return active_sets
 
-    def run(self, datasets: list, configs: Namespace = None, **kwargs):
+    def run(self, datasets: List[Dataset], configs: Namespace = None, **kwargs):
+        """
+        Runs the runner. This method lives through the entire workflow and 
+        calls other methods in the Runner class when appropriate.
+
+        Args:
+            datasets(list):     list of datasets
+            configs(Namespace): config file provided by user and processed with MMCV
+            **kwargs:           Miscellaneous arguments to pass down to epoch_runners
+        """
+
         workflow = configs.workflow
-        # Save config.active_learning as instance variable for later access
         self.cfg_al = configs.active_learning
         self.sample_settings = getattr(self.cfg_al.settings, self.sample_mode)
 
@@ -283,8 +368,23 @@ class ActiveLearningRunner(BaseRunner):
         for al_round in range(self.sample_rounds):
             self.logger.info(f"Active Learning sample round {al_round+1}.")
             self._epoch = 0
+
             for i, flow in enumerate(workflow):
                 mode, epochs = flow
+
+                ### START OF DEBUG: try iteratively increasing epoch by each round ###
+                # if mode == 'train':
+                #     train_epoch_per_round = epochs
+                #     divider = (1 + self.sample_rounds) * self.sample_rounds // 2
+                #     total_round = self.sample_rounds * train_epoch_per_round
+                #     base = total_round // divider
+                #     remainder = total_round - base * divider
+                #     epochs = base * (al_round+1)
+                #     if al_round == 0:
+                #         epochs += remainder
+                #     self.logger.info(f"Training for {epochs} epochs at round {al_round+1}.")
+                ### END OF DEBUG ###
+
                 self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
                 if isinstance(mode, str):  # e.g. train mode
                     if not hasattr(self, mode):
@@ -293,7 +393,7 @@ class ActiveLearningRunner(BaseRunner):
                     epoch_runner = getattr(self, mode)
                 else:
                     raise TypeError('mode in workflow must be a str, but got {}'.format(type(mode)))
-                # print(f"debug message: {mode}")
+                
                 new_loader = build_dataloader(
                     active_sets[i],
                     configs.data.samples_per_gpu,

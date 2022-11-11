@@ -147,7 +147,7 @@ class ModelWrapper:
             dist=True if len(self.gpu_ids) > 1 else False,
             seed=self.seed,
             drop_last=False,
-            pin_memory=False  # NOTE: try set to False to fix memory issue (or use memmap)
+            pin_memory=False  # NOTE: try setting to False if run out of memory (or use memmap)
             )
 
         results = []
@@ -174,12 +174,15 @@ class ModelWrapper:
 
                 outputs = model.module.encode_decode(ext_img, ext_img_meta) #.half() 
                 scores = heuristic.get_uncertainties(outputs)
-
+                
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
                     for i, score in enumerate(scores):
                         # Exclude the already annotated pixels before querying new ones
-                        score[mask[i]] = 0.0 # lowest possible value for Random and Entropy heuristics
+                        # 0. is the lowest possible value for Random, Margin and Entropy heuristics
+                        score[mask[i].numpy()] = 0.0 
+                        if idx % 100 == 0:
+                            rank, _ = get_dist_info()
                         new_query = self.extract_query_indices(uc_map=score)
                         results.append(new_query)
                 elif self.sample_mode == 'image': 

@@ -5,13 +5,13 @@ Code mostly similar to BAAL.
 """
 from typing import Callable
 import numpy as np
+from copy import deepcopy
 import os
 import os.path as osp
-import torch
+import pickle
 import torch.utils.data as torchdata
 from mmseg.utils import get_root_logger
 from mmcv.runner import get_dist_info
-from mmcv.parallel import DataContainer
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 from PIL import Image
@@ -39,7 +39,7 @@ class ActiveLearningLoop:
     def __init__(
         self,
         dataset: ActiveLearningDataset,
-        query_dataset: torchdata.Dataset, 
+        query_dataset: ActiveLearningDataset,
         get_probabilities: Callable,
         heuristic: AbstractHeuristic = Random(),
         configs: dict = {},
@@ -54,6 +54,7 @@ class ActiveLearningLoop:
         self.max_sample = max_sample
         self.configs = configs 
         self.sample_mode = configs.runner.sample_mode
+        self.has_stepped = False # a variable to control whether to create a file for query_mask saving
         assert self.sample_mode in ['pixel', 'image'], "Sample mode needs to be either pixel or image"
         self.sample_settings = getattr(configs.active_learning.settings, self.sample_mode)
         if self.sample_mode == 'pixel':
@@ -80,7 +81,6 @@ class ActiveLearningLoop:
             return False
 
         uncertainty_scores = self.get_probabilities(dataset, self.heuristic, **self.kwargs)
-        # scores_check = np.any(uncertainty_scores.astype(bool)) # check if score is np.zeros
 
         if uncertainty_scores is not None:
             ranked = self.heuristic.reorder_indices(uncertainty_scores)
@@ -94,27 +94,40 @@ class ActiveLearningLoop:
 
     def update_pixel_labelled_pool(self):
 
+        rank, world = get_dist_info()
+
+        # single gpu / multi gpu, first pass / multi gpu, late passes
+        tmp_dir = osp.join(CWD, 'queries_save_dir')
+        file_name = f'query_rank_0.pkl'
+        if not self.has_stepped:
+            # skip the first step() call since no file to read from
+            self.has_stepped = True
+        elif world > 1 and rank != 0: # multi-gpu setting
+            # if not rank=0 worker, load the new query mask from `tmp_dir`
+            file_path = osp.join(tmp_dir, file_name)
+            assert osp.exists(file_path), f'query mask file save path not exist ({file_path})'
+            with open(file_path, 'rb') as fs:
+                updated_mask = pickle.load(fs)
+                assert isinstance(updated_mask, np.ndarray), 'query mask should be saved as np.array type.'
+                print(f" [rank {rank}] loaded updated_mask, shape ", updated_mask.shape)
+                print(f" [rank {rank}] updated_mask nonzero() count ", updated_mask.nonzero()[0].shape)
+                self.query_dataset.masks = updated_mask
+
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
-        query_pixel_map = query_pixel_map[:len(self.dataset.masks)]
+        query_pixel_map = query_pixel_map[:len(self.dataset.masks)] 
 
         # Set train_set's mask to be the masks computed on query_set
-        union_mask = np.logical_or(self.dataset.masks, query_pixel_map)
+        new_query_mask = np.logical_or(self.query_dataset.masks, query_pixel_map)
 
-        # DEBUG
-        # debug_indices = [0, 20, 30, 50]
-        # for d in debug_indices:
-        #     nz_tuple = query_pixel_map[d].nonzero()
-        #     dbg_list = [ (nz_tuple[0][i], nz_tuple[1][i]) for i in range(len(nz_tuple[0]))]
-        #     print(f"query_pixel_map new samples: \n{sorted(dbg_list, key=lambda x:x[0])}")
-            
-        #     union_tuple = union_mask[d].nonzero()
-        #     dbg_list_2 = [ (union_tuple[0][i], union_tuple[1][i]) for i in range(len(union_tuple[0]))]
-        #     print(f"union_tuple new samples: \n{sorted(dbg_list_2, key=lambda x:x[0])}")
-        # END OF DEBUG
-
-        rank, world = get_dist_info()
         if rank == 0:
-            self.dataset.masks = union_mask
+            self.dataset.masks = new_query_mask
+            self.query_dataset.masks = deepcopy(new_query_mask)
+            # save the query file for other devices to collect from
+            if world > 1:
+                os.makedirs(tmp_dir, exist_ok=True)
+                with open(osp.join(tmp_dir, file_name), 'wb') as fs:
+                    pickle.dump(new_query_mask, fs)
+                
         self.num_labelled_pixels += self.sample_settings['query_size']
         
         return True
@@ -190,7 +203,7 @@ class ActiveLearningLoop:
             os.makedirs(epoch_vis_dir, exist_ok=True)
             self.logger.info("Saving visualization...")
             for v in self.vis_indices:
-                # original image (256x512 for CityScapes) and corresponding mask
+                # original image (256x512 for Cityscapes) and corresponding mask
                 ori, mask = self.dataset.get_raw(v), self.dataset.masks[v]
                 ori = self.revert_transforms(ori, ori['img_metas'].data)
                 file_name = osp.join(epoch_vis_dir, f"{v}.png")

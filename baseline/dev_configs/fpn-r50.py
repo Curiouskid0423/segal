@@ -1,13 +1,15 @@
 QUERY_EPOCH = 50 # PixelPick setting is 50 epochs
-QUERY_SIZE = 10
+# Try training with iteratively increasing epochs: 240 = 16 * (1+5)*5/2
+# Split into 250 = (16+10) + 32 + 48 + 64 + 80
+QUERY_SIZE = 10 # 1300 pixels = 1% of 256x512
 SAMPLE_ROUNDS = 10
 GPU = 2
-SPG = 8 # Sample per GPU
+SPG = 2 # Sample per GPU
 HEURISTIC = "margin"
 MODEL_FILE = '../../configs/_base_/models/fpn_r50.py'
 DATA_FILE = './dataset/cityscapes_pixel.py' 
 RUNTIME_FILE = '../../configs/_base_/default_runtime.py'
-# Original CityScapes dataset: '../../configs/_base_/datasets/
+# Original Cityscapes dataset: '../../configs/_base_/datasets/
 
 _base_ = [
     MODEL_FILE, 
@@ -28,7 +30,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='al_baseline',
-                name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry{QUERY_SIZE}_e{QUERY_EPOCH}_lr4e-4_wd0_{HEURISTIC}',
+                name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry1%_e{QUERY_EPOCH}_lr2e-4_wd0_{HEURISTIC}_viz',
             )
         )
     ]
@@ -51,7 +53,7 @@ active_learning = dict(
     visualize = dict(
         size=10,
         overlay=True,
-        dir="viz"
+        dir="viz_reproduce_fix"
     ),
     heuristic=HEURISTIC,
     shuffle_prop=0.0, # from BAAL package. ignored at the current phase.
@@ -65,8 +67,9 @@ runner = dict(
     sample_rounds=SAMPLE_ROUNDS, 
     pretrained='supervised' # FIXME: allow ['supervised', 'self-supervised', 'random']
 )
-evaluation = dict(interval=QUERY_EPOCH//10, by_epoch=True, metric='mIoU', pre_eval=True) # eval on "validation" set
+
+evaluation = dict(interval=QUERY_EPOCH//5, by_epoch=True, metric='mIoU', pre_eval=True) # eval on "validation" set
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
 lr_config = dict(policy='poly', power=0.9, min_lr=1e-5, by_epoch=True)
-optimizer = dict(type='Adam', lr=4e-4, weight_decay=0.) 
+optimizer = dict(type='Adam', lr=1e-4, weight_decay=0.)
 optimizer_config = dict()
