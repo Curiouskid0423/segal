@@ -50,8 +50,8 @@ class ActiveLearningRunner(BaseRunner):
         self.sampling_terminate = False
 
         """ debug settings to expedite experiments """
-        self.debug = False
-        self.debug_dataset_size = 1000 # 1000 = 33% of the training split
+        self.debug = True
+        self.debug_dataset_size = 600 # 1000 = 33% of the training split
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 

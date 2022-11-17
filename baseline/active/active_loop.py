@@ -6,6 +6,7 @@ Code mostly similar to BAAL.
 from typing import Callable
 import numpy as np
 from copy import deepcopy
+from datetime import datetime
 import os
 import os.path as osp
 import pickle
@@ -60,6 +61,8 @@ class ActiveLearningLoop:
         if self.sample_mode == 'pixel':
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
+        self.time_hash = datetime.now().strftime("%m%d_%H_%M_%S")
+        self.queries_save_dir = osp.join(CWD, f'queries_save_dir_{self.time_hash}')
 
         if hasattr(configs.active_learning, 'visualize'):
             assert configs.active_learning.visualize.size > 0
@@ -97,20 +100,20 @@ class ActiveLearningLoop:
         rank, world = get_dist_info()
 
         # single gpu / multi gpu, first pass / multi gpu, late passes
-        tmp_dir = osp.join(CWD, 'queries_save_dir')
         file_name = f'query_rank_0.pkl'
         if not self.has_stepped:
             # skip the first step() call since no file to read from
             self.has_stepped = True
         elif world > 1 and rank != 0: # multi-gpu setting
-            # if not rank=0 worker, load the new query mask from `tmp_dir`
-            file_path = osp.join(tmp_dir, file_name)
+            # if not rank=0 worker, load the new query mask from `self.queries_save_dir`
+            file_path = osp.join(self.queries_save_dir, file_name)
             assert osp.exists(file_path), f'query mask file save path not exist ({file_path})'
             with open(file_path, 'rb') as fs:
                 updated_mask = pickle.load(fs)
+                self.logger.info(f"Loading from queries from {file_path}")
                 assert isinstance(updated_mask, np.ndarray), 'query mask should be saved as np.array type.'
-                print(f" [rank {rank}] loaded updated_mask, shape ", updated_mask.shape)
-                print(f" [rank {rank}] updated_mask nonzero() count ", updated_mask.nonzero()[0].shape)
+                # print(f" [rank {rank}] loaded updated_mask, shape ", updated_mask.shape)
+                # print(f" [rank {rank}] updated_mask nonzero() count ", updated_mask.nonzero()[0].shape)
                 self.query_dataset.masks = updated_mask
 
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
@@ -124,8 +127,9 @@ class ActiveLearningLoop:
             self.query_dataset.masks = deepcopy(new_query_mask)
             # save the query file for other devices to collect from
             if world > 1:
-                os.makedirs(tmp_dir, exist_ok=True)
-                with open(osp.join(tmp_dir, file_name), 'wb') as fs:
+                os.makedirs(self.queries_save_dir, exist_ok=True)
+                # overwrite with the latest masks
+                with open(osp.join(self.queries_save_dir, file_name), 'wb') as fs:
                     pickle.dump(new_query_mask, fs)
                 
         self.num_labelled_pixels += self.sample_settings['query_size']

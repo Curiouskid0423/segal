@@ -1,4 +1,4 @@
-QUERY_EPOCH = 50 # PixelPick setting is 50 epochs
+QUERY_EPOCH = 1 # PixelPick setting is 50 epochs
 # Try training with iteratively increasing epochs: 240 = 16 * (1+5)*5/2
 # Split into 250 = (16+10) + 32 + 48 + 64 + 80
 QUERY_SIZE = 10 # 1300 pixels = 1% of 256x512
@@ -25,14 +25,14 @@ log_config = dict(
     interval=20,
     hooks=[
         dict(type='TextLoggerHook'),
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='al_baseline',
-                name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry1%_e{QUERY_EPOCH}_lr2e-4_wd0_{HEURISTIC}_viz',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='al_baseline',
+        #         name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry1%_e{QUERY_EPOCH}_lr2e-4_wd0_{HEURISTIC}_viz',
+        #     )
+        # )
     ]
 )
 
@@ -68,7 +68,7 @@ runner = dict(
     pretrained='supervised' # FIXME: allow ['supervised', 'self-supervised', 'random']
 )
 
-evaluation = dict(interval=QUERY_EPOCH//5, by_epoch=True, metric='mIoU', pre_eval=True) # eval on "validation" set
+evaluation = dict(interval=QUERY_EPOCH, by_epoch=True, metric='mIoU', pre_eval=True) # eval on "validation" set
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
 lr_config = dict(policy='poly', power=0.9, min_lr=1e-5, by_epoch=True)
 optimizer = dict(type='Adam', lr=1e-4, weight_decay=0.)
