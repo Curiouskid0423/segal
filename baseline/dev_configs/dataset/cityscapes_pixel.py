@@ -3,7 +3,7 @@ dataset_type = 'CityscapesDataset' # train=2975, val=500, test=1525
 data_root = '/shared/yutengli/data/cityscapes/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
-scale_size=(256, 512) # Benchmark setting: Resized to speed up training
+scale_size=(512, 1024) # Benchmark setting: Resized to speed up training
 
 train_pipeline = [
     dict(type='LoadImageFromFile'),

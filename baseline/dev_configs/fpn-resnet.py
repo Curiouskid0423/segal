@@ -1,10 +1,10 @@
-QUERY_EPOCH = 1 # PixelPick setting is 50 epochs
+QUERY_EPOCH = 30 # PixelPick setting is 50 epochs
 # Try training with iteratively increasing epochs: 240 = 16 * (1+5)*5/2
 # Split into 250 = (16+10) + 32 + 48 + 64 + 80
-QUERY_SIZE = 10 # 1300 pixels = 1% of 256x512
-SAMPLE_ROUNDS = 10
-GPU = 2
-SPG = 2 # Sample per GPU
+QUERY_SIZE = 5243 # 512 * 1024 * 0.01 = 5242.88 pixels
+SAMPLE_ROUNDS = 5
+GPU = 4
+SPG = 1 # Sample per GPU
 HEURISTIC = "margin"
 MODEL_FILE = '../../configs/_base_/models/fpn_r50.py'
 DATA_FILE = './dataset/cityscapes_pixel.py' 
@@ -18,6 +18,10 @@ _base_ = [
 ]
 
 # Cannot afford workers_per_gpu > 2 on Windigo
+model = dict(init_cfg=dict(
+                type='Pretrained', 
+                checkpoint='open-mmlab://resnet101_v1c'
+            ), backbone=dict(depth=101))
 data = dict( samples_per_gpu=SPG, workers_per_gpu=2 ) 
 
 """ ===== Log configs ===== """
@@ -25,14 +29,14 @@ log_config = dict(
     interval=20,
     hooks=[
         dict(type='TextLoggerHook'),
-        # dict(
-        #     type='WandbLoggerHookWithVal',
-        #     init_kwargs=dict(
-        #         entity='syn2real',
-        #         project='al_baseline',
-        #         name=f'(Titan)_fpn-r50_pix_bth{GPU*SPG}_act{SAMPLE_ROUNDS}_qry1%_e{QUERY_EPOCH}_lr2e-4_wd0_{HEURISTIC}_viz',
-        #     )
-        # )
+        dict(
+            type='WandbLoggerHookWithVal',
+            init_kwargs=dict(
+                entity='syn2real',
+                project='active_domain_adapt',
+                name=f'(Titan)_r101_round{SAMPLE_ROUNDS}_q1%_gpu{GPU}',
+            )
+        )
     ]
 )
 

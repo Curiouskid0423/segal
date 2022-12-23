@@ -201,4 +201,35 @@ class MarginSampling(AbstractHeuristic):
             
         elif self.mode == 'pixel':
             return query_map.cpu().numpy()
+
+class RegionImpurity(AbstractHeuristic):
+    """
+    Region Impurity loss from AL-RIPU paper https://arxiv.org/abs/2111.12940
+    Vectorize the comput using CNN mat2vec function
+    """
+
+    def __init__(self, mode, shuffle_prop=0, k=1, reduction="none"):
+        """
+        Args:
+            mode (str):     sampling mode. has to be either `pixel` or `region`
+            k(int):         region size is defined as (2K+1) * (2K+1)
+        """
+
+        super().__init__(shuffle_prop, reverse=False, reduction=reduction)
+        self.mode = mode
+        self.k = k
+
+    # def compute_score(self, predictions):
+
+    #     softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
+    #     assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
+    #     category_map = softmax_pred.argmax(dim=1) # (b, 1, h, w)
+    #     # queries = softmax_pred.topk(k=2, dim=1).values 
+    #     # query_map = (queries[:, 0, :, :] - queries[:, 1, :, :]).abs() # shape: (b, h, w)
         
+    #     if self.mode == 'pixel':
+    #         return query_map.cpu().numpy()
+    #     elif self.mode == 'region':
+    #         raise NotImplementedError("region-based sampling not implemented at the moment.")
+    #     else:
+    #         raise ValueError("sample mode has to be either pixel or region to use Region Impurity score.")

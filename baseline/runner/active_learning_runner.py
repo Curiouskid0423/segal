@@ -51,13 +51,13 @@ class ActiveLearningRunner(BaseRunner):
 
         """ debug settings to expedite experiments """
         self.debug = True
-        self.debug_dataset_size = 600 # 1000 = 33% of the training split
+        self.debug_dataset_size = 1000 # 1000 = 33% of the training split
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 
             max_iters, max_epochs=query_epochs)
-
-        self.logger.info(f"Using debug dataset size: {self.debug_dataset_size} images, for training")
+        if self.debug:
+            self.logger.info(f"Using debug dataset size: {self.debug_dataset_size} images, for training")
         
 
     def init_active_variables(
