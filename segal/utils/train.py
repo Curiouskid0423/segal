@@ -11,14 +11,14 @@ import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import HOOKS, BaseRunner, build_optimizer, build_runner
 from mmcv.utils import build_from_cfg
+# from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmseg import digit_version
 from mmseg.models import BaseSegmentor
 from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
-from baseline.runner import *
-from baseline.hooks import *
-# from mmcv.parallel.collate import collate as mmcv_collate_fn
+from segal.runner import *
+from segal.hooks import *
 
 def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp) -> BaseRunner:
     """

@@ -3,14 +3,16 @@
 SegAL is a comprehensive active learning baseline system based on [OpenMMLab](https://github.com/open-mmlab) framework, intending to support ***all*** essential features in active learning experiment, which includes providing image-based and pixel-based sampling pipelines, different heuristic functions (e.g. margin sampling, entropy), and visualization features such as "visualize selected pixels". SegAL can be easily integrated with user-defined sampling methods by modifying one of the key files listed below, as well as the up-to-date models from OpenMMLab, provided by [MMSegmentation](https://github.com/open-mmlab/mmsegmentation), [MMSelfSup](https://github.com/open-mmlab/mmselfsup) and more. 
 
 #### Getting started
-- Create and edit a config file (the way you interact with MMLab modules; check out tutorials [here](https://mmsegmentation.readthedocs.io/en/latest/tutorials/config.html)). Follow the example in `dev_configs/fpn-r50.py`. The only differences from conventional usages of OpenMMLab are the `active_learning` and `runner` configs. More detailed spec to come.
+- Create and edit a config file the way you interact with MMLab modules. Check out tutorials [here](https://mmsegmentation.readthedocs.io/en/latest/tutorials/config.html). Then add active learning specific configs following this [guide](./al_config_guide.md), or any files in `experiments/` if you prefer following through examples. The only differences from conventional usages of OpenMMLab are the `active_learning` and `runner` configs. More detailed spec to come.
 
-- Train with command: `bash baseline_dev/dist_train_al.sh <config_file> <number_of_GPUs>`
+- Train with command: `bash dist_train_al.sh <config_file> <number_of_GPUs>`
 
 #### Key files
 ```
-baseline/
-|-- dist_train_al.sh
+configs/            // mmseg config files
+experiments/        // experiment related files
+dist_train_al.sh    // training script
+segal/
 |-- train_active_learning.py
 |-- model_wrapper.py
 |-- active
@@ -21,12 +23,6 @@ baseline/
 |   `-- heuristics
 |       |-- heuristics.py
 |       `-- utils.py
-|-- dev_configs
-|   |-- dataset
-|   |   `-- cityscapes_pixel.py
-|   |-- fpn-r50.py
-|   |-- optimal.py
-|   `-- supervised.py
 |-- hooks
 |   `-- wandb.py
 |-- utils

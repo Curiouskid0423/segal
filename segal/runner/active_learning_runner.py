@@ -20,10 +20,10 @@ from mmcv.runner.builder import RUNNERS
 from mmseg.models import build_segmentor
 from mmseg.datasets import build_dataloader
 from mmseg.datasets.pipelines import Compose
-from baseline.active.active_loop import ActiveLearningLoop
-from baseline.active.dataset import ActiveLearningDataset
-from baseline.model_wrapper import ModelWrapper
-from baseline.active import get_heuristics
+from segal.active.active_loop import ActiveLearningLoop
+from segal.active.dataset import ActiveLearningDataset
+from segal.model_wrapper import ModelWrapper
+from segal.active import get_heuristics
 
 @RUNNERS.register_module()
 class ActiveLearningRunner(BaseRunner):
@@ -51,7 +51,7 @@ class ActiveLearningRunner(BaseRunner):
 
         """ debug settings to expedite experiments """
         self.debug = True
-        self.debug_dataset_size = 1000 # 1000 = 33% of the training split
+        self.debug_dataset_size = 500 # 1000 = 33% of the training split
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 

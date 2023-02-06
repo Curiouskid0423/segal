@@ -8,7 +8,6 @@ import copy
 import sys
 import os
 import os.path as osp
-sys.path.append(os.getcwd())
 import time
 import warnings
 import torch
@@ -26,7 +25,7 @@ from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
-from baseline.utils.train import train_al_segmentor
+from segal.utils.train import train_al_segmentor
 
 
 def parse_args():

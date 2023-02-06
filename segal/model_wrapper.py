@@ -17,8 +17,8 @@ from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
 from mmseg.utils import get_root_logger
 from mmseg.datasets import build_dataloader
-from baseline.active.dataset.active_dataset import ActiveLearningDataset
-from baseline.active.heuristics import AbstractHeuristic
+from segal.active.dataset.active_dataset import ActiveLearningDataset
+from segal.active.heuristics import AbstractHeuristic
 # from torch.utils.data.dataloader import default_collate
 # from mmcv.engine import collect_results_cpu
 

@@ -6,9 +6,9 @@ SAMPLE_ROUNDS = 5
 GPU = 4
 SPG = 1 # Sample per GPU
 HEURISTIC = "margin"
-MODEL_FILE = '../../configs/_base_/models/fpn_r50.py'
-DATA_FILE = './dataset/cityscapes_pixel.py' 
-RUNTIME_FILE = '../../configs/_base_/default_runtime.py'
+MODEL_FILE = '../configs/_base_/models/fpn_r50.py'
+DATA_FILE = './dataset/cityscapes.py' 
+RUNTIME_FILE = '../configs/_base_/default_runtime.py'
 # Original Cityscapes dataset: '../../configs/_base_/datasets/
 
 _base_ = [
