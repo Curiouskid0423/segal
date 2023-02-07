@@ -23,9 +23,9 @@ class GTAVDataset(CustomDataset):
 
     def __init__(self, **kwargs):
         super(GTAVDataset, self).__init__(
-            img_dir='images',
+            # img_dir='images',
             img_suffix='.png',
-            ann_dir='labels',
+            # ann_dir='labels',
             seg_map_suffix='_cityscapes.png',
             **kwargs)
         assert osp.exists(self.img_dir)

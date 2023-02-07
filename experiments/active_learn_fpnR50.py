@@ -1,6 +1,4 @@
 QUERY_EPOCH = 30 # PixelPick setting is 50 epochs
-# Try training with iteratively increasing epochs: 240 = 16 * (1+5)*5/2
-# Split into 250 = (16+10) + 32 + 48 + 64 + 80
 QUERY_SIZE = 5243 # 512 * 1024 * 0.01 = 5242.88 pixels
 SAMPLE_ROUNDS = 5
 GPU = 4
@@ -9,7 +7,6 @@ HEURISTIC = "margin"
 MODEL_FILE = '../configs/_base_/models/fpn_r50.py'
 DATA_FILE = './dataset/cityscapes.py' 
 RUNTIME_FILE = '../configs/_base_/default_runtime.py'
-# Original Cityscapes dataset: '../../configs/_base_/datasets/
 
 _base_ = [
     MODEL_FILE, 
@@ -21,7 +18,8 @@ _base_ = [
 model = dict(init_cfg=dict(
                 type='Pretrained', 
                 checkpoint='open-mmlab://resnet101_v1c'
-            ), backbone=dict(depth=101))
+                ), backbone=dict(depth=101)
+            )
 data = dict( samples_per_gpu=SPG, workers_per_gpu=2 ) 
 
 """ ===== Log configs ===== """

@@ -203,9 +203,10 @@ def train_al_segmentor(
 
     if cfg.runner.type == 'ActiveLearningRunner':
         runner.run(datasets, configs=cfg)
-    elif cfg.runner.type == 'EpochBasedRunner':
+    # elif cfg.runner.type == 'EpochBasedRunner':
+    else:
         data_loaders = setup_dataloaders(cfg, distributed, datasets)
         runner.run(data_loaders, configs=cfg, workflow=cfg.workflow)
-    else:
-        raise NotImplementedError(
-            f"Supports for IterBasedRunner is still in development. Please use ActiveLearningRunner for the time being.")
+    # else:
+    #     raise NotImplementedError(
+    #         f"Supports for IterBasedRunner is still in development. Please use ActiveLearningRunner for the time being.")

@@ -33,7 +33,7 @@ runner = dict(
     type='ActiveLearningRunner', 
     sample_mode="pixel", 
     sample_rounds=SAMPLE_ROUNDS, 
-    pretrained='supervised' # FIXME: allow ['supervised', 'self-supervised', 'random']
+    pretrained='supervised'
 )
 ```
 

@@ -48,17 +48,10 @@ class ActiveLearningRunner(BaseRunner):
         self.sample_mode = sample_mode
         self.sample_rounds = sample_rounds
         self.sampling_terminate = False
-
-        """ debug settings to expedite experiments """
-        self.debug = True
-        self.debug_dataset_size = 500 # 1000 = 33% of the training split
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 
             max_iters, max_epochs=query_epochs)
-        if self.debug:
-            self.logger.info(f"Using debug dataset size: {self.debug_dataset_size} images, for training")
-        
 
     def init_active_variables(
         self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
@@ -178,16 +171,11 @@ class ActiveLearningRunner(BaseRunner):
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
 
-        mask_count_var = 0  # FIXME: debug variable
+        mask_count_var = 0  # debug variable
 
         for i, data_batch in enumerate(self.data_loader):
-            # debug setting: truncate dataset
-            _, world = get_dist_info()
-            debug_data_limit = self.debug_dataset_size // (len(data_batch) * world)
-            if self.debug and i >= debug_data_limit:
-                break
             # mask check to verify that all devices have the right number of masks
-            if mask_count_var < 8 and self.sample_mode == 'pixel':
+            if mask_count_var < 5 and self.sample_mode == 'pixel':
                 pixel_mask_check(data_batch, i)
                 mask_count_var += 1
             self._inner_iter = i
