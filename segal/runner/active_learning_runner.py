@@ -173,7 +173,9 @@ class ActiveLearningRunner(BaseRunner):
 
         for i, data_batch in enumerate(self.data_loader):
             # mask check to verify that all devices have the right number of masks
-            if mask_count_var < 5 and self.sample_mode == 'pixel':
+            # check every 100 batches
+            if (mask_count_var < 5 and i % 100 == 0) \
+                and self.sample_mode == 'pixel':
                 pixel_mask_check(data_batch, i)
                 mask_count_var += 1
             self._inner_iter = i
@@ -367,7 +369,7 @@ class ActiveLearningRunner(BaseRunner):
                 mode, epochs = flow
 
                 self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
-                if isinstance(mode, str):  # e.g. train mode
+                if isinstance(mode, str):  
                     if not hasattr(self, mode):
                         raise ValueError(
                             f'runner has no method named "{mode}" to run an epoch')

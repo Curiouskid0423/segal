@@ -32,8 +32,7 @@ workflow = [('train', QUERY_EPOCH), ('query', 1)]
 runner = dict(
     type='ActiveLearningRunner', 
     sample_mode="pixel", 
-    sample_rounds=SAMPLE_ROUNDS, 
-    pretrained='supervised'
+    sample_rounds=SAMPLE_ROUNDS
 )
 ```
 
@@ -48,4 +47,3 @@ runner = dict(
     - `type`: Use the customized runner `ActiveLearningRunner` in Segal, which allows iteratively adding new labels into the dataloader.
     - `sample_mode`: Define the sampling mode, either "pixel" or "image". Will also allow region-based sampling in the near future. 
     - `sample_rounds`: Numbers of sampling rounds. For example, setting this to 5 means sampling `query_size` amount of labels for five times.
-    - `pretrained`: Set weight initialization. Currently only "supervised" is valid. Should have three options ('supervised', 'self-supervised', 'random']) after bug fix.

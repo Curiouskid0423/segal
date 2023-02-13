@@ -179,10 +179,8 @@ class ModelWrapper:
                 if self.sample_mode == 'pixel':
                     for i, score in enumerate(scores):
                         # Exclude the already annotated pixels before querying new ones
-                        # 0. is the lowest possible value for Random, Margin and Entropy heuristics
+                        # 0 is the lowest possible value for Random, Margin and Entropy heuristics
                         score[mask[i].numpy()] = 0.0 
-                        if idx % 100 == 0:
-                            rank, _ = get_dist_info()
                         new_query = self.extract_query_indices(uc_map=score)
                         results.append(new_query)
                 elif self.sample_mode == 'image': 
@@ -215,21 +213,31 @@ class ModelWrapper:
         return a set of query indices (size of query_size, specified in the cfg file)
         """
         h, w = uc_map.shape
-        top_k_percent = self.sample_settings['sample_threshold']
         query_size = self.sample_settings['query_size']
 
         flattened_uc_map = uc_map.flatten()
         uc_map_cuda = torch.FloatTensor(flattened_uc_map).cuda()
-        available_pixels = int(top_k_percent / 100 * h * w)
-        query_indices = uc_map_cuda.topk(
-            k=available_pixels,
-            dim=-1,
-            largest=True,
-        ).indices.cpu().numpy()
-        if top_k_percent > 0.:
-            query_indices = np.random.choice(query_indices, size=query_size, replace=False)
+        # print(f"uncertainty map dimension (flattened): {uc_map_cuda.shape}")
         
-        # Create a new query mask
+        if hasattr(self.sample_settings, 'sample_threshold'):
+            top_k_percent = self.sample_settings['sample_threshold']
+            assert top_k_percent > 0., \
+                f"Can only sample with sample_threshold > 0, but received sample_threshold {top_k_percent}"
+            available_pixels = int(top_k_percent / 100 * h * w)
+            query_indices = uc_map_cuda.topk(
+                k=available_pixels,
+                dim=-1,
+                largest=True,
+            ).indices.cpu().numpy()
+            query_indices = np.random.choice(query_indices, size=query_size, replace=False)
+            
+        else:
+            query_indices = uc_map_cuda.topk(
+                k=query_size,
+                dim=-1,
+                largest=True
+            ).indices.cpu().numpy()
+            
         new_query = np.zeros((h * w), dtype=np.bool)
         new_query[query_indices] = True
         new_query = new_query.reshape((h, w))

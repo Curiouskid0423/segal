@@ -1,9 +1,10 @@
-DATA_FILE = './dataset/gtav.py'
-RUNTIME_FILE = '../configs/_base_/default_runtime.py'
-MODEL_FILE = '../configs/_base_/models/upernet_vit-b16_ln_mln.py'
-SCHEDULE_FILE = '../configs/_base_/schedules/schedule_160k.py'
+BASE = '../' 
+DATA_FILE = f'{BASE}dataset/gtav.py'
+RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
+MODEL_FILE = f'{BASE}../configs/_base_/models/upernet_vit-b16_ln_mln.py'
+SCHEDULE_FILE = f'{BASE}../configs/_base_/schedules/schedule_160k.py'
 SPG = 2 # Sample per GPU
-GPU = 8
+GPU = 4
 
 custom_imports = dict(
     imports=[
@@ -19,7 +20,7 @@ _base_ = [
 ]
 
 model = dict(
-    pretrained='experiments/vit_related/pretrained/vit-base-p16_in1k-224.pth',
+    pretrained='experiments/vit/ckpts/vit-base-p16_in1k-224.pth',
     backbone=dict(drop_path_rate=0.1, final_norm=True),
     decode_head=dict(num_classes=150),
     auxiliary_head=dict(num_classes=150)
@@ -67,7 +68,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'upernet_vit-b16_gtav_itr160k_batch{SPG*GPU}_IN-initialized',
+                name=f'upernet_vit-b16_gtav_itr160k_batch{SPG*GPU}_BlockerRun',
             )
         )
     ]

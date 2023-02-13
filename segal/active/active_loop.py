@@ -61,7 +61,7 @@ class ActiveLearningLoop:
         if self.sample_mode == 'pixel':
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
-        self.time_hash = datetime.now().strftime("%m%d_%H_%M_%S")
+        self.time_hash = datetime.now().strftime("%m%d_%H_%M")
         self.queries_save_dir = osp.join(CWD, f'queries_save_dir_{self.time_hash}')
 
         if hasattr(configs.active_learning, 'visualize'):
