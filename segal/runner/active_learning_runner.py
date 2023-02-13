@@ -13,6 +13,8 @@ import time
 from copy import deepcopy
 from typing import Union, List
 from argparse import Namespace
+import gc
+
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, BaseModule, get_host_info, get_dist_info, save_checkpoint
@@ -36,11 +38,7 @@ class ActiveLearningRunner(BaseRunner):
 
     def __init__(
         self, model, batch_processor=None, optimizer=None, work_dir=None, logger=None, meta=None, max_iters=None, 
-        max_epochs=None, query_epochs=None, sample_mode=None, sample_rounds=None, pretrained=None):
-
-        # FIXME: Support other pretrained options
-        if pretrained not in [None, 'supervised']:
-            raise NotImplementedError("Only supervised pretrained mode is supported at the current phase.")
+        max_epochs=None, query_epochs=None, sample_mode=None, sample_rounds=None):
 
         if max_iters is not None:
             raise NotImplementedError("`max_iter` argument is not supported in ActiveLearningRunner.")
@@ -72,7 +70,7 @@ class ActiveLearningRunner(BaseRunner):
 
         self.wrapper = ModelWrapper(self.model, cfg)
         heuristic = get_heuristics(
-            self.sample_mode, cfg.active_learning.heuristic, cfg.active_learning.shuffle_prop)
+            self.sample_mode, cfg.active_learning.heuristic)
 
         self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
         self.get_initial_labels(settings, dataset)
@@ -368,19 +366,6 @@ class ActiveLearningRunner(BaseRunner):
             for i, flow in enumerate(workflow):
                 mode, epochs = flow
 
-                ### START OF DEBUG: try iteratively increasing epoch by each round ###
-                # if mode == 'train':
-                #     train_epoch_per_round = epochs
-                #     divider = (1 + self.sample_rounds) * self.sample_rounds // 2
-                #     total_round = self.sample_rounds * train_epoch_per_round
-                #     base = total_round // divider
-                #     remainder = total_round - base * divider
-                #     epochs = base * (al_round+1)
-                #     if al_round == 0:
-                #         epochs += remainder
-                #     self.logger.info(f"Training for {epochs} epochs at round {al_round+1}.")
-                ### END OF DEBUG ###
-
                 self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
                 if isinstance(mode, str):  # e.g. train mode
                     if not hasattr(self, mode):
@@ -402,6 +387,10 @@ class ActiveLearningRunner(BaseRunner):
             
                 for _ in range(epochs):
                     epoch_runner(new_loader, **kwargs)
+
+                del new_loader
+                gc.collect()
+                torch.cuda.empty_cache()
                 
                 if self.sampling_terminate:
                     return

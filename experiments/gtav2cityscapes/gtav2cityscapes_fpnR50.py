@@ -16,7 +16,7 @@ _base_ = [
 
 custom_imports = dict(
     imports=[
-        'segal.configs._base_.dataset_gtav',
+        'experiments._base_.dataset_gtav',
     ], allow_failed_imports=False
 )
 
@@ -56,7 +56,6 @@ active_learning = dict(
     #     dir="gta2cityscapes"
     # ),
     heuristic=HEURISTIC,
-    shuffle_prop=0.0, # from BAAL package. ignored at the current phase.
 )
 
 """ ===== Workflow and Runtime configs ===== """

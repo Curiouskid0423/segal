@@ -1,10 +1,20 @@
-gtav_root = '/shared/yutengli/data/gtav/'
+"""
+config file for gtav -> cityscapes on deeplabv3+_resnet101
+"""
+
+# NOTE: Using mini GTAV (only 2000 images) for faster iteration
+gtav_root = '/shared/yutengli/data/gtav/mini/'
 cs_root = '/shared/yutengli/data/cityscapes/'
+
 # dataset settings
 img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+    mean=[123.675, 116.28, 103.53], 
+    std=[58.395, 57.12, 57.375], 
+    to_rgb=True
+)
 scale_size = (256, 512)
 # scale_size = (512, 1024)
+
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
@@ -17,6 +27,23 @@ train_pipeline = [
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_semantic_seg']),
 ]
+
+query_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations'),
+    dict(
+        type='MultiScaleFlipAug',
+        img_scale=scale_size,
+        flip=False,
+        transforms=[
+            dict(type='Resize', keep_ratio=True),
+            # dict(type='RandomFlip'),
+            dict(type='Normalize', **img_norm_cfg),
+            dict(type='DefaultFormatBundle'),
+            dict(type='Collect', keys=['img', 'gt_semantic_seg']),
+        ])
+]
+
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
@@ -39,10 +66,14 @@ data = dict(
         type='GTAVDataset',
         data_root=gtav_root,
         img_dir='images',
-        img_suffix='.png',
         ann_dir='labels',
-        seg_map_suffix='_cityscapes.png',
         pipeline=train_pipeline),
+    query=dict(
+        type='CityscapesDataset',
+        data_root=cs_root,
+        img_dir='leftImg8bit/train',
+        ann_dir='gtFine/train',
+        pipeline=query_pipeline),
     val=dict(
         type='CityscapesDataset',
         data_root=cs_root,
