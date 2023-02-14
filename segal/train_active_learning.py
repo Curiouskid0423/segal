@@ -5,7 +5,6 @@ but with some Active Learning wrappers that we created.
 
 import argparse
 import copy
-import sys
 import os
 import os.path as osp
 import time

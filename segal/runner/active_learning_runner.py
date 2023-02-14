@@ -224,6 +224,23 @@ class ActiveLearningRunner(BaseRunner):
                 m._is_init = value
                 self.recursively_set_is_init(model=m, value=value)
 
+    def reset_weights(self):
+        
+        if "DataParallel" in self.model.__class__.__name__:
+            model = self.model.module
+        else:
+            model = self.model
+
+        # config contains `resume_from`
+        if hasattr(self.configs, 'load_from'):
+            from mmcv.runner.checkpoint import load_checkpoint
+            rank, _ = get_dist_info()
+            if rank == 0:
+                load_checkpoint(model, filename=self.configs.load_from)
+        else:
+            self.recursively_set_is_init(model, value=False)
+            model.init_weights()
+
     def active_sampling(self, sample_mode: str):
         """
         Given the sample_mode (image or pixel), perform a round of active learning sampling, and re-initialize
@@ -238,27 +255,27 @@ class ActiveLearningRunner(BaseRunner):
             return False 
 
         if sample_mode == 'image':
+            budget = self.sample_settings['budget_per_round']
             self.logger.info(
-                f"Epoch {self.epoch} completed. Sampled new query of size {self.sample_settings['query_size']}.")
+                f"Epoch {self.epoch} completed. Sampled new query of size {budget}.")
         else:
             labelled_pix = self.active_learning_loop.num_labelled_pixels
-            total_budget = self.sample_rounds * self.sample_settings.query_size
-            self.logger.info(f"Epoch {self.epoch} completed. {labelled_pix} pixels labelled, total budget {total_budget}.")
+            budget = self.sample_settings.budget_per_round
+            # total_budget = self.sample_rounds * self.sample_settings.budget_per_round
+            self.logger.info(
+                f"Epoch {self.epoch} completed. Labelled {labelled_pix} pixels, total budget {budget} pixels x {self.sample_rounds} rounds.")
 
         # Reset weights (backbone, neck, decode_head)
-        if "DataParallel" in self.model.__class__.__name__:
-            self.recursively_set_is_init(self.model.module, False)
-            self.model.module.init_weights()
-        else:
-            self.recursively_set_is_init(self.model, False)
-            self.model.init_weights()
-
+        if not hasattr(self.cfg_al, 'reset_each_round') or self.cfg_al.reset_each_round:
+            self.reset_weights()
+            self.logger.info("Re-initialized weights and lr after sampling.")
+        
+        # Visualize the labeled query pixels
         if hasattr(self.cfg_al, "visualize"):
             self.active_learning_loop.visualize()
 
         self.logger.info("Process sleep for 3 seconds.")
         time.sleep(3) # prevent deadlock before step() returns from all devices
-        self.logger.info("Re-initialized weights and lr after sampling.")
         return True
         
     def get_initial_labels(self, sample_settings: dict, active_set: ActiveLearningDataset, dataset_type: str = 'train'):
@@ -340,6 +357,7 @@ class ActiveLearningRunner(BaseRunner):
         """
 
         workflow = configs.workflow
+        self.configs = configs
         self.cfg_al = configs.active_learning
         self.sample_settings = getattr(self.cfg_al.settings, self.sample_mode)
 
@@ -348,7 +366,7 @@ class ActiveLearningRunner(BaseRunner):
         assert mmcv.is_list_of(workflow, tuple)
         assert len(datasets) == len(workflow)
         
-        # Set up ActiveLearningDataset instance and label the data in the specified strategy
+        # Set up ActiveLearningDataset instance and label data in the specified strategy
         active_sets = self.create_active_sets(datasets, configs)
         
         work_dir = self.work_dir if self.work_dir is not None else 'NONE'
@@ -362,17 +380,18 @@ class ActiveLearningRunner(BaseRunner):
 
         # Loop through the workflow until hits max_epochs
         for al_round in range(self.sample_rounds):
+            
             self.logger.info(f"Active Learning sample round {al_round+1}.")
             self._epoch = 0
 
             for i, flow in enumerate(workflow):
+                
                 mode, epochs = flow
 
                 self.logger.info(f"Current {mode} set size: {len(active_sets[i])}")
                 if isinstance(mode, str):  
                     if not hasattr(self, mode):
-                        raise ValueError(
-                            f'runner has no method named "{mode}" to run an epoch')
+                        raise ValueError(f'runner has no method named "{mode}" to run an epoch')
                     epoch_runner = getattr(self, mode)
                 else:
                     raise TypeError('mode in workflow must be a str, but got {}'.format(type(mode)))

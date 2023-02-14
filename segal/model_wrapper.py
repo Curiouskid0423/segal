@@ -6,6 +6,7 @@ import sys
 from copy import deepcopy
 from collections.abc import Sequence
 from typing import Callable, Optional
+from functools import reduce
 
 import numpy as np
 import pickle
@@ -123,6 +124,21 @@ class ModelWrapper:
         """
         self.eval()
         raise NotImplementedError
+    
+    def batch_preprocess(self, data_batch):
+        """ Preprocess data batch for type compatibility """
+
+        if isinstance(data_batch['img'], DataContainer):
+            ext_img = data_batch['img'].data[0].cuda()
+        else:
+            ext_img = data_batch['img'][0].data[0].cuda()
+
+        if isinstance(data_batch['img_metas'], DataContainer):
+            ext_img_meta = data_batch['img_metas'].data[0]
+        else:
+            ext_img_meta = data_batch['img_metas'][0]
+
+        return ext_img, ext_img_meta
 
     def predict_on_dataset(
         self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
@@ -138,6 +154,7 @@ class ModelWrapper:
         model = self.backbone
         if self.sample_mode == 'pixel':
             assert isinstance(dataset, ActiveLearningDataset)
+        self.query_dataset_size = len(dataset)
         test_loader = build_dataloader(
             dataset,
             samples_per_gpu=1, 
@@ -147,8 +164,8 @@ class ModelWrapper:
             dist=True if len(self.gpu_ids) > 1 else False,
             seed=self.seed,
             drop_last=False,
-            pin_memory=False  # NOTE: try setting to False if run out of memory (or use memmap)
-            )
+            pin_memory=False  
+        )
 
         results = []
         
@@ -156,37 +173,37 @@ class ModelWrapper:
         if rank == 0:
             prog_bar = mmcv.ProgressBar(len(dataset))
 
+        if self.sample_mode == 'pixel':
+            if hasattr(self.sample_settings, 'sample_evenly'):
+                sample_evenly = self.sample_settings.sample_evenly
+            else:
+                sample_evenly = False
+
         for idx, data_batch in enumerate(test_loader):
 
             if self.sample_mode == 'pixel':
                 data_batch, mask = data_batch
                 
             with torch.no_grad():
-                if isinstance(data_batch['img'], DataContainer):
-                    ext_img = data_batch['img'].data[0].cuda()
-                else:
-                    ext_img = data_batch['img'][0].data[0].cuda()
 
-                if isinstance(data_batch['img_metas'], DataContainer):
-                    ext_img_meta = data_batch['img_metas'].data[0]
-                else:
-                    ext_img_meta = data_batch['img_metas'][0]
-
+                ext_img, ext_img_meta = self.batch_preprocess(data_batch)
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs)
                 
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
                     for i, score in enumerate(scores):
-                        # Exclude the already annotated pixels before querying new ones
-                        # 0 is the lowest possible value for Random, Margin and Entropy heuristics
-                        score[mask[i].numpy()] = 0.0 
-                        new_query = self.extract_query_indices(uc_map=score)
-                        results.append(new_query)
+                        score[mask[i].numpy()] = 0.0 # Mask labeled pixels (0 is the lowest uncertainty value)
+                        if sample_evenly:
+                            new_query = self.extract_query_indices(uc_map=score)
+                            results.append(new_query)
+                        else:
+                            results.append(score)
+
                 elif self.sample_mode == 'image': 
                     results.extend(scores)
                 else:
-                    raise NotImplementedError
+                    raise NotImplementedError("sample_mode has to be either pixel or image currently")
 
             # Rank 0 worker will collect progress from all workers.
             if rank == 0:
@@ -194,54 +211,85 @@ class ModelWrapper:
                 for _ in range(completed):
                     prog_bar.update()
 
+        if not sample_evenly:
+            results = self.extract_query_indices(np.array(results), sample_evenly=False)
+
         # collect results from all devices (GPU)
         results = np.array(results, dtype=np.bool)
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
         
+        # For rank 0 worker
         if len(all_results) > 0:
             return all_results
-        elif self.sample_mode == 'pixel':
+
+        # For workers that are not rank 0 
+        if self.sample_mode == 'pixel':
             ds = dataset[0][0]['gt_semantic_seg'][0].data.squeeze().size()
             return np.zeros(shape=(len(dataset), ds[0], ds[1]))
         else:
             return np.zeros(len(dataset))
 
-    def extract_query_indices(self, uc_map):
+    def get_pixels_by_budget(self, budget: int, uc_map:torch.Tensor, sample_evenly: bool):
         """
-        Given an uncertainty map (e.g. 512 x 1024 for CityScapes),
-        return a set of query indices (size of query_size, specified in the cfg file)
-        """
-        h, w = uc_map.shape
-        query_size = self.sample_settings['query_size']
+        The method is for pixel-based sampling (not image-based).
 
-        flattened_uc_map = uc_map.flatten()
-        uc_map_cuda = torch.FloatTensor(flattened_uc_map).cuda()
-        # print(f"uncertainty map dimension (flattened): {uc_map_cuda.shape}")
+        Given uncertainty map or a list of uncertainty maps, budget, and sample_evenly,
+        return the top K pixels to label according to the budget and `sample_threshold`
+        Returns (value, index) using torch.Tensor.topk API.
+        """
+        
+        top_k_percent = None
+        unit = reduce(lambda x, y: x*y, uc_map.shape)
         
         if hasattr(self.sample_settings, 'sample_threshold'):
             top_k_percent = self.sample_settings['sample_threshold']
             assert top_k_percent > 0., \
                 f"Can only sample with sample_threshold > 0, but received sample_threshold {top_k_percent}"
-            available_pixels = int(top_k_percent / 100 * h * w)
-            query_indices = uc_map_cuda.topk(
-                k=available_pixels,
-                dim=-1,
-                largest=True,
-            ).indices.cpu().numpy()
-            query_indices = np.random.choice(query_indices, size=query_size, replace=False)
-            
+            selection_pool = int(top_k_percent / 100 * unit)
         else:
-            query_indices = uc_map_cuda.topk(
-                k=query_size,
-                dim=-1,
-                largest=True
-            ).indices.cpu().numpy()
-            
-        new_query = np.zeros((h * w), dtype=np.bool)
-        new_query[query_indices] = True
-        new_query = new_query.reshape((h, w))
+            if sample_evenly:
+                selection_pool = budget // self.query_dataset_size
+            else:
+                selection_pool = budget
+                
+        values, indices = uc_map.flatten().topk(k=selection_pool, dim=-1, largest=True)
+        indices = indices.cpu().numpy()
+        if top_k_percent != None: # sample_threshold=True
+            if sample_evenly:
+                query_size = budget // unit
+                indices = np.random.choice(indices, size=query_size, replace=False)
+            else:
+                assert len(indices) >= budget
+                indices = np.random.choice(indices, size=budget, replace=False)
+        indices_of_original_shape = np.unravel_index(indices, uc_map.shape)
+        return indices_of_original_shape
 
+
+    def extract_query_indices(self, uc_map, sample_evenly=True):
+        """
+        Given either an uncertainty map (e.g. 512 x 1024 for Cityscapes) or a list
+        of uncertainty maps, return a set of query indices in corresponding dimensions.
+        This methods assumes that the already labeled pixels have been set to the 
+        lowest possible uncertainty score upon input (to avoid re-labeling).
+
+        Args:
+            uc_map:         A List of map (N, H, W) or an uncertainty score map (H, W)
+            sample_evenly:  Indicate whether to sample pixels for labeling evenly across
+                            all images. By default to True when uc_map is NOT a list, 
+                            i.e. 2 dimension.
+        Return:
+            query_indices:  A boolean mask to indicate which pixels to label
+        """
+
+        assert (sample_evenly and len(uc_map.shape) == 2) or \
+            (not sample_evenly and len(uc_map.shape) == 3)
+
+        budget = self.sample_settings.budget_per_round
+        uc_map_cuda = torch.FloatTensor(uc_map).cuda() 
+        indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
+        new_query = np.zeros(uc_map.shape, dtype=np.bool)
+        new_query[indices] = True
         return new_query
 
     def get_params(self):

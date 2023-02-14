@@ -142,10 +142,10 @@ class ActiveLearningDataset(OracleDataset):
 
         h, w = mask_shape
         N = len(self.dataset)
-        init_pixels = self.settings['initial_label_pixels']
+        init_pixels = self.settings['initial_label_pixels'] // N
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
-        self.logger.info("Creating masks for pixel-based sampling mode")
+        self.logger.info(f"Creating masks for pixel-based sampling mode. Start with {init_pixels} per image.")
 
         self.masks = [np.random.permutation(h * w).reshape(h, w) < init_pixels for _ in range(N)]
         self.masks = np.array(self.masks)

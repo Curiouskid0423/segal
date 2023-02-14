@@ -1,2 +1,3 @@
-bash dist_train.sh  experiments/gtav_pretraining_deeplabv3+r50.py 8
-bash dist_train.sh  experiments/gtav_pretraining_deeplabv3+r101.py 8
+bash dist_train.sh  experiments/dev_cfg_entropy.py 4
+sleep 10
+bash dist_train.sh  experiments/dev_cfg_random.py 4

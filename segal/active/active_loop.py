@@ -32,7 +32,6 @@ class ActiveLearningLoop:
         get_probabilities (Function): 
             Dataset -> **kwargs -> ndarray [n_samples, n_outputs, n_iterations].
         heuristic (Heuristic):  Heuristic from baal.active.heuristics.
-        query_size (int):       Number of sample to label per step.
         max_sample (int):       Limit the number of sample used (-1 is no limit).
         **kwargs:               Parameters forwarded to `get_probabilities`.
     """
@@ -90,7 +89,7 @@ class ActiveLearningLoop:
             if indices is not None:
                 ranked = indices[np.array(ranked)]
             if len(ranked) > 0:
-                self.dataset.label(ranked[:self.sample_settings.query_size])
+                self.dataset.label(ranked[:self.sample_settings.budget_per_round])
                 return True
 
         return False
@@ -132,7 +131,7 @@ class ActiveLearningLoop:
                 with open(osp.join(self.queries_save_dir, file_name), 'wb') as fs:
                     pickle.dump(new_query_mask, fs)
                 
-        self.num_labelled_pixels += self.sample_settings['query_size']
+        self.num_labelled_pixels += self.sample_settings['budget_per_round']
         
         return True
 
