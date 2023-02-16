@@ -24,6 +24,7 @@ def get_heuristics(mode, name, shuffle_prop=0., reduction="none", **kwargs):
         "random": heuristics.Random,
         "entropy": heuristics.Entropy,
         "margin": heuristics.MarginSampling,
+        "ripu": heuristics.RegionImpurity
     }
 
     assert mode != None, "mode argument has to be either pixel or image for sampling"

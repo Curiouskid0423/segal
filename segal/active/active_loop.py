@@ -120,7 +120,6 @@ class ActiveLearningLoop:
 
         # Set train_set's mask to be the masks computed on query_set
         new_query_mask = np.logical_or(self.query_dataset.masks, query_pixel_map)
-
         if rank == 0:
             self.dataset.masks = new_query_mask
             self.query_dataset.masks = deepcopy(new_query_mask)
@@ -130,7 +129,6 @@ class ActiveLearningLoop:
                 # overwrite with the latest masks
                 with open(osp.join(self.queries_save_dir, file_name), 'wb') as fs:
                     pickle.dump(new_query_mask, fs)
-                
         self.num_labelled_pixels += self.sample_settings['budget_per_round']
         
         return True

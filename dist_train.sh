@@ -5,7 +5,7 @@ NODE_RANK=${NODE_RANK:-0}
 PORT=${PORT:-29501}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
-# CUDA_VISIBLE_DEVICES=6,7,8,9 \
+# CUDA_VISIBLE_DEVICES=4,5,6,7,8,9 \
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
 python -m torch.distributed.launch \
     --nnodes=$NNODES \
