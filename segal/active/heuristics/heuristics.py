@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from collections.abc import Sequence
 
-from .utils import to_prob
+from .utils import to_prob, RIPU_Net
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),
@@ -65,7 +65,7 @@ class AbstractHeuristic:
         scores = self.reduction(scores)
         
         if not np.all(np.isfinite(scores)):
-            fixed = 0.0 if self.reversed else 10000
+            fixed = 0.0 if self.reversed else 10000 
             warnings.warn("Some value in scores vector is infinite.")
             scores[~np.isfinite(scores)] = fixed
 
@@ -174,7 +174,8 @@ class Entropy(AbstractHeuristic):
         if self.mode == 'image':
             return self.image_mean_entropy(probs)
         elif self.mode == 'pixel':
-            return self.pixel_mean_entropy(probs)
+            query_map =  self.pixel_mean_entropy(probs)
+            return query_map
 
 class MarginSampling(AbstractHeuristic):
     """
@@ -205,31 +206,28 @@ class MarginSampling(AbstractHeuristic):
 class RegionImpurity(AbstractHeuristic):
     """
     Region Impurity loss from AL-RIPU paper https://arxiv.org/abs/2111.12940
-    Vectorize the comput using CNN mat2vec function
     """
 
-    def __init__(self, mode, shuffle_prop=0, k=1, reduction="none"):
+    def __init__(self, mode, categories, shuffle_prop=0, k=1, reduction="none"):
         """
         Args:
             mode (str):     sampling mode. has to be either `pixel` or `region`
             k(int):         region size is defined as (2K+1) * (2K+1)
         """
-
-        super().__init__(shuffle_prop, reverse=False, reduction=reduction)
+        super().__init__(shuffle_prop, reverse=True, reduction=reduction)
         self.mode = mode
-        self.k = k
+        self.ripu_net = RIPU_Net(size=2*k+1, channels=categories)
 
-    # def compute_score(self, predictions):
+    def compute_score(self, predictions):
+        """
+        Args:
+            prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
 
-    #     softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
-    #     assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
-    #     category_map = softmax_pred.argmax(dim=1) # (b, 1, h, w)
-    #     # queries = softmax_pred.topk(k=2, dim=1).values 
-    #     # query_map = (queries[:, 0, :, :] - queries[:, 1, :, :]).abs() # shape: (b, h, w)
-        
-    #     if self.mode == 'pixel':
-    #         return query_map.cpu().numpy()
-    #     elif self.mode == 'region':
-    #         raise NotImplementedError("region-based sampling not implemented at the moment.")
-    #     else:
-    #         raise ValueError("sample mode has to be either pixel or region to use Region Impurity score.")
+        Return:
+            uncertainty score (Tensor):     uncertainty score map of size [b, h, w]
+        """
+
+        softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
+        assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
+        scores = self.ripu_net(softmax_pred.cpu(), use_entropy=True) # should be (b, h, w)
+        return scores

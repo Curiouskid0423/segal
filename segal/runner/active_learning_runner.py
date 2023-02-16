@@ -69,8 +69,20 @@ class ActiveLearningRunner(BaseRunner):
         self.query_dataset = query_dataset
 
         self.wrapper = ModelWrapper(self.model, cfg)
-        heuristic = get_heuristics(
-            self.sample_mode, cfg.active_learning.heuristic)
+        if hasattr(cfg.active_learning, "heuristic_cfg"):
+            hconfig = cfg.active_learning.heuristic_cfg
+            if cfg.active_learning.heuristic == 'ripu':
+                heuristic = get_heuristics(
+                    mode=self.sample_mode, 
+                    name='ripu',
+                    k=hconfig.k,
+                    categories=hconfig.categories
+                )
+            else:
+                raise NotImplementedError("Unknown heuristic for the provided heuristic_cfg.")
+        else:
+            heuristic = get_heuristics(
+                self.sample_mode, cfg.active_learning.heuristic)
 
         self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
         self.get_initial_labels(settings, dataset)
@@ -174,7 +186,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, data_batch in enumerate(self.data_loader):
             # mask check to verify that all devices have the right number of masks
             # check every 100 batches
-            if (mask_count_var < 5 and i % 100 == 0) \
+            if (mask_count_var < 5 and i % 20 == 0) \
                 and self.sample_mode == 'pixel':
                 pixel_mask_check(data_batch, i)
                 mask_count_var += 1

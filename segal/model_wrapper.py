@@ -185,7 +185,6 @@ class ModelWrapper:
                 data_batch, mask = data_batch
                 
             with torch.no_grad():
-
                 ext_img, ext_img_meta = self.batch_preprocess(data_batch)
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs)
@@ -193,7 +192,7 @@ class ModelWrapper:
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
                     for i, score in enumerate(scores):
-                        score[mask[i].numpy()] = 0.0 # Mask labeled pixels (0 is the lowest uncertainty value)
+                        score[mask[i].numpy()] = -1.0 # Mask labeled pixels (0 is the lowest uncertainty value)
                         if sample_evenly:
                             new_query = self.extract_query_indices(uc_map=score)
                             results.append(new_query)

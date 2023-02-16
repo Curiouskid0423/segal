@@ -1,1 +1,1 @@
-from .heuristics import AbstractHeuristic, Random, Entropy, MarginSampling
+from .heuristics import AbstractHeuristic, Random, Entropy, MarginSampling, RegionImpurity
