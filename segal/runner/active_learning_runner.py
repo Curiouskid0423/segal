@@ -19,7 +19,6 @@ from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, BaseModule, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
-from mmseg.models import build_segmentor
 from mmseg.datasets import build_dataloader
 from mmseg.datasets.pipelines import Compose
 from segal.active.active_loop import ActiveLearningLoop
@@ -42,14 +41,14 @@ class ActiveLearningRunner(BaseRunner):
 
         if max_iters is not None:
             raise NotImplementedError("`max_iter` argument is not supported in ActiveLearningRunner.")
+        assert max_epochs is not None, "`max_epochs` should not be None."
         self.query_epochs = query_epochs
         self.sample_mode = sample_mode
         self.sample_rounds = sample_rounds
         self.sampling_terminate = False
         
         super().__init__(
-            model, batch_processor, optimizer, work_dir, logger, meta, 
-            max_iters, max_epochs=query_epochs)
+            model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
     def init_active_variables(
         self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
@@ -76,6 +75,7 @@ class ActiveLearningRunner(BaseRunner):
                     mode=self.sample_mode, 
                     name='ripu',
                     k=hconfig.k,
+                    use_entropy=hconfig.use_entropy,
                     categories=hconfig.categories
                 )
             else:
@@ -184,12 +184,10 @@ class ActiveLearningRunner(BaseRunner):
         mask_count_var = 0  # debug variable
 
         for i, data_batch in enumerate(self.data_loader):
-            # mask check to verify that all devices have the right number of masks
-            # check every 100 batches
-            if (mask_count_var < 5 and i % 20 == 0) \
-                and self.sample_mode == 'pixel':
-                pixel_mask_check(data_batch, i)
-                mask_count_var += 1
+            # verify that all devices have the right number of masks (check every 100 batch)
+            # if (mask_count_var < 5 and i % 100 == 0) and self.sample_mode == 'pixel':
+            #     pixel_mask_check(data_batch, i)
+            #     mask_count_var += 1
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -280,7 +278,7 @@ class ActiveLearningRunner(BaseRunner):
         # Reset weights (backbone, neck, decode_head)
         if not hasattr(self.cfg_al, 'reset_each_round') or self.cfg_al.reset_each_round:
             self.reset_weights()
-            self.logger.info("Re-initialized weights and lr after sampling.")
+            self.logger.info("Re-initialized weights after sampling.")
         
         # Visualize the labeled query pixels
         if hasattr(self.cfg_al, "visualize"):
@@ -394,7 +392,10 @@ class ActiveLearningRunner(BaseRunner):
         for al_round in range(self.sample_rounds):
             
             self.logger.info(f"Active Learning sample round {al_round+1}.")
-            self._epoch = 0
+            reset_toggle = hasattr(self.cfg_al, "reset_each_round") and self.cfg_al.reset_each_round
+            if al_round > 0 and reset_toggle:
+                self._epoch = 0
+                self.logger.info("Re-initialized learning rate (lr) after sampling.")
 
             for i, flow in enumerate(workflow):
                 
