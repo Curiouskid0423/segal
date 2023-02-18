@@ -208,7 +208,7 @@ class RegionImpurity(AbstractHeuristic):
     Region Impurity loss from AL-RIPU paper https://arxiv.org/abs/2111.12940
     """
 
-    def __init__(self, mode, categories, shuffle_prop=0, k=1, reduction="none"):
+    def __init__(self, mode, categories, shuffle_prop=0, k=1, use_entropy=True, reduction="none"):
         """
         Args:
             mode (str):     sampling mode. has to be either `pixel` or `region`
@@ -216,6 +216,7 @@ class RegionImpurity(AbstractHeuristic):
         """
         super().__init__(shuffle_prop, reverse=True, reduction=reduction)
         self.mode = mode
+        self.use_entropy = use_entropy
         self.ripu_net = RIPU_Net(size=2*k+1, channels=categories)
 
     def compute_score(self, predictions):
@@ -229,5 +230,5 @@ class RegionImpurity(AbstractHeuristic):
 
         softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
         assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
-        scores = self.ripu_net(softmax_pred.cpu(), use_entropy=True) # should be (b, h, w)
+        scores = self.ripu_net(softmax_pred.cpu(), use_entropy=self.use_entropy) # should be (b, h, w)
         return scores

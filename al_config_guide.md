@@ -11,7 +11,7 @@ custom_imports = dict(
     ], allow_failed_imports=False
 )
 
-resume_from = 'experiments/gtv_ckpt_fpnR50.pth'
+load_from = 'experiments/gtv_ckpt_fpnR50.pth'
 
 _base_ = [ 
     MODEL_FILE, 
@@ -41,7 +41,12 @@ active_learning = dict(
         dir="viz_folder"
     ),
     reset_each_round=True,
-    heuristic=HEURISTIC
+    heuristic=HEURISTIC,
+    heuristic_cfg=dict(
+        k=1,
+        use_entropy=True,
+        categories=19 # Cityscapes and GTAV have 19 classes
+    )
 )
 
 """ ===== Workflow and Runtime configs ===== """
@@ -73,7 +78,8 @@ log_config = dict(
 )
 
 ```
-
+- `custom_imports`: This is a MMCV feature that allows users to import customized module imports. In this example, we are adding GTAV Dataset class.
+- `load_from`: A MMCV feature to load pretrained weights. In this example, we load in a GTAV-pretrained FPN-ResNet50.
 - `active_learning`
     - `settings`: Contains either image- or pixel-based sampling configs. User may leave both image- and pixel-based settings in the config, but only one will be used according to the `sample_mode` specified in `runner` config.
         - `image`: Contains all image-based sampling configs. `initial_pool` denotes the number of labelled images available at the beginning of training. `budget_per_round` denotes the number of images queried per sampling round. 
@@ -81,6 +87,7 @@ log_config = dict(
     - `visualize`: Contains settings to visualize the map of sampled pixels. `size` denotes number of visualized images/maps exported. `overlay` is a binary value to indicate whether to overlay the labelled pixels (shown as white dots) over the input image. `dir` specifies the folder to store visualizations in.
     - `reset_each_round`: A binary variable to determine whether to reset the weights after each round of sampling is performed.
     - `heuristics`: Defines the sampling heuristic function.
+    - `heuristics_cfg`: Currently only supported when using `RIPU` heuristics, as illustrated in the example above. Defines the hyperparameters in the desired heuristic function. 
 - `workflow`: The workflow config works the same way as the standard `mmseg` configs, but with an additional **query** tuple after the "train" tuple. In the above example, the model queries for new labels every QUERY_EPOCH epoch.  
 - `runner`
     - `type`: Use the customized runner `ActiveLearningRunner` in Segal, which allows iteratively adding new labels into the dataloader.

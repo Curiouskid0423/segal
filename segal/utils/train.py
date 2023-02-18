@@ -40,9 +40,16 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
             
     runner_cfg = copy.deepcopy(cfg.runner)
     if runner_cfg.type == 'ActiveLearningRunner':
+        # set query_epochs
         for mode, iteration in cfg.workflow:
             if mode == 'train':
                 runner_cfg.query_epochs = iteration
+        
+        # set `max_epochs` according to `reset_each_round` variable
+        cfg_al = cfg.active_learning
+        runner_cfg.max_epochs = runner_cfg.query_epochs
+        if not (hasattr(cfg_al, "reset_each_round") and cfg_al.reset_each_round):
+            runner_cfg.max_epochs *= runner_cfg.sample_rounds
             
     runner = build_runner(
         runner_cfg,

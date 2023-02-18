@@ -46,6 +46,7 @@ active_learning = dict(
     heuristic=HEURISTIC,
     heuristic_cfg=dict(
         k=1,
+        use_entropy=True,
         categories=19 # Cityscapes and GTAV have 19 classes
     )
 )
