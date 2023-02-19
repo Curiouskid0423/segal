@@ -1,10 +1,11 @@
 import numpy as np
 import warnings
 import torch
+import torch.nn as nn
 from torch import Tensor
 from collections.abc import Sequence
 
-from .utils import to_prob, RIPU_Net
+from .utils import to_prob, RIPU_Net, Sparsity_Net
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),
@@ -53,7 +54,7 @@ class AbstractHeuristic:
         """
         raise NotImplementedError
 
-    def get_uncertainties(self, predictions):
+    def get_uncertainties(self, predictions, **kwargs):
 
         """ 
         Get the uncertainties.
@@ -61,10 +62,10 @@ class AbstractHeuristic:
         Return: Array of uncertainties
         """
 
-        scores = self.compute_score(predictions)
-        scores = self.reduction(scores)
+        scores = self.compute_score(predictions, **kwargs)
+        # scores = self.reduction(scores)
         
-        if not np.all(np.isfinite(scores)):
+        if not np.isfinite(scores).all():
             fixed = 0.0 if self.reversed else 10000 
             warnings.warn("Some value in scores vector is infinite.")
             scores[~np.isfinite(scores)] = fixed
@@ -122,7 +123,7 @@ class AbstractHeuristic:
 class Random(AbstractHeuristic):
 
     def __init__(
-        self, shuffle_prop=1.0, mode="image",reduction="none", seed=None):
+        self, shuffle_prop=1.0, mode="image", seed=None):
         super().__init__(shuffle_prop=shuffle_prop, reverse=False)
 
         self.mode = mode
@@ -132,7 +133,7 @@ class Random(AbstractHeuristic):
         else:
             self.rng = np.random
 
-    def compute_score(self, predictions):
+    def compute_score(self, predictions, **kwargs):
         
         if isinstance(predictions, Tensor):
             predictions = predictions.cpu().numpy()
@@ -149,33 +150,33 @@ class Entropy(AbstractHeuristic):
     """
     Sort by entropy. The higher, the more uncertain.
     """
-    def __init__(self, mode, shuffle_prop=0, reduction="none"):
+    def __init__(self, mode, shuffle_prop=0):
         # reverse = True to turn "ascending" result into a descending order.
-        super().__init__(shuffle_prop, reverse=True, reduction=reduction)
+        super().__init__(shuffle_prop, reverse=True)
         self.mode = mode
+    
+    def get_entropy(self, p, dim, keepdim):
+        return torch.sum(-p * torch.log(p + 1e-6), dim=dim, keepdim=keepdim)
 
     def pixel_mean_entropy(self, softmax_pred):
         bs, classes, img_H, img_W = softmax_pred.size()
-        entropy_map = -torch.mul(softmax_pred, softmax_pred.log()).sum(dim=1) #.half()
+        entropy_map = self.get_entropy(softmax_pred, dim=1, keepdim=False)
         entropy_map = entropy_map.reshape(shape=(bs, img_H, img_W))
         return entropy_map.cpu().numpy()
 
     def image_mean_entropy(self, softmax_pred):
         bs, classes, img_H, img_W = softmax_pred.size()
         flat_probs = softmax_pred.reshape(bs, -1)
-        N = img_H * img_W # number of pixels
-
-        entropy_lst = (-torch.mul(flat_probs, flat_probs.log())).sum(dim=-1) 
+        entropy_lst = self.get_entropy(flat_probs, dim=-1, keepdim=False)
         return entropy_lst.cpu().numpy()
 
-    def compute_score(self, predictions):
+    def compute_score(self, predictions, **kwargs):
         """ `predictions` have to be a Tensor """
         probs = to_prob(predictions)
         if self.mode == 'image':
             return self.image_mean_entropy(probs)
         elif self.mode == 'pixel':
-            query_map =  self.pixel_mean_entropy(probs)
-            return query_map
+            return self.pixel_mean_entropy(probs)
 
 class MarginSampling(AbstractHeuristic):
     """
@@ -184,11 +185,11 @@ class MarginSampling(AbstractHeuristic):
     we want to minimize this value, as opposed to Entropy and Random
     """
 
-    def __init__(self, mode, shuffle_prop=0, reduction="none"):
-        super().__init__(shuffle_prop, reverse=False, reduction=reduction)
+    def __init__(self, mode, shuffle_prop=0):
+        super().__init__(shuffle_prop, reverse=False)
         self.mode = mode
 
-    def compute_score(self, predictions):
+    def compute_score(self, predictions, **kwargs):
 
         softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
 
@@ -208,18 +209,19 @@ class RegionImpurity(AbstractHeuristic):
     Region Impurity loss from AL-RIPU paper https://arxiv.org/abs/2111.12940
     """
 
-    def __init__(self, mode, categories, shuffle_prop=0, k=1, use_entropy=True, reduction="none"):
+    def __init__(self, mode, categories, shuffle_prop=0, k=1, use_entropy=True):
         """
         Args:
             mode (str):     sampling mode. has to be either `pixel` or `region`
             k(int):         region size is defined as (2K+1) * (2K+1)
         """
-        super().__init__(shuffle_prop, reverse=True, reduction=reduction)
+        # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
+        super().__init__(shuffle_prop, reverse=True)
         self.mode = mode
         self.use_entropy = use_entropy
         self.ripu_net = RIPU_Net(size=2*k+1, channels=categories)
 
-    def compute_score(self, predictions):
+    def compute_score(self, predictions, **kwargs):
         """
         Args:
             prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
@@ -231,4 +233,36 @@ class RegionImpurity(AbstractHeuristic):
         softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
         assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
         scores = self.ripu_net(softmax_pred.cpu(), use_entropy=self.use_entropy) # should be (b, h, w)
+        return scores
+
+class Sparsity(AbstractHeuristic):
+    """
+    Sparsity Score to encourage entropy to spread out
+    """
+
+    def __init__(self, mode, shuffle_prop=0, k=1, alpha=1.8, inflection=0.5,reverse=True):
+
+        # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
+        super().__init__(shuffle_prop, reverse)
+        assert mode == 'pixel'
+        self.mode = mode
+        self.sparsity_net = Sparsity_Net(
+            size=2*k+1, 
+            alpha=alpha,            # sigmoid softness
+            inflection=inflection   # inflection point
+        )
+
+    
+    def compute_score(self, predictions, mask):
+        """
+        Args:
+            prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
+            mask (Tensor): boolean mask (size of [b, 1, h, w])
+        
+        Return:
+            uncertainty (sparsity score) (Tensor): uncertainty score map of size [b, h, w]
+        """
+        
+        softmax_pred = to_prob(predictions) # [B, C, H, W]
+        scores = self.sparsity_net(softmax_pred.cpu(), mask)
         return scores

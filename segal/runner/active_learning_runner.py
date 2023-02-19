@@ -11,16 +11,15 @@ import mmcv
 import numpy as np
 import time
 from copy import deepcopy
-from typing import Union, List
+from typing import List
 from argparse import Namespace
-import gc
+import gc # garbage collection
 
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, BaseModule, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
 from mmseg.datasets import build_dataloader
-from mmseg.datasets.pipelines import Compose
 from segal.active.active_loop import ActiveLearningLoop
 from segal.active.dataset import ActiveLearningDataset
 from segal.model_wrapper import ModelWrapper
@@ -77,6 +76,14 @@ class ActiveLearningRunner(BaseRunner):
                     k=hconfig.k,
                     use_entropy=hconfig.use_entropy,
                     categories=hconfig.categories
+                )
+            elif cfg.active_learning.heuristic == 'sparsity':
+                heuristic = get_heuristics(
+                    mode=self.sample_mode, 
+                    name='sparsity',
+                    k=hconfig.k,
+                    inflection=hconfig.inflection,
+                    alpha=1.8 if not hasattr(hconfig, 'alpha') else hconfig.alpha
                 )
             else:
                 raise NotImplementedError("Unknown heuristic for the provided heuristic_cfg.")

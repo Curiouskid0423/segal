@@ -187,7 +187,7 @@ class ModelWrapper:
             with torch.no_grad():
                 ext_img, ext_img_meta = self.batch_preprocess(data_batch)
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
-                scores = heuristic.get_uncertainties(outputs)
+                scores = heuristic.get_uncertainties(outputs, mask=mask)
                 
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
@@ -284,9 +284,16 @@ class ModelWrapper:
         assert (sample_evenly and len(uc_map.shape) == 2) or \
             (not sample_evenly and len(uc_map.shape) == 3)
 
+        sample_unit = 'pixel'
+
         budget = self.sample_settings.budget_per_round
         uc_map_cuda = torch.FloatTensor(uc_map).cuda() 
-        indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
+        if sample_unit == 'pixel':
+            indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
+        elif sample_unit == 'region':
+            indices = self.get_regions_by_budget(budget, uc_map_cuda, sample_evenly)
+        else:
+            raise NotImplementedError("Not recognized sampling unit.")
         new_query = np.zeros(uc_map.shape, dtype=np.bool)
         new_query[indices] = True
         return new_query
