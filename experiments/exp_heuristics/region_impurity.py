@@ -9,7 +9,7 @@ GPU = 8
 QUERY_EPOCH = 20
 BUDGET = int(256*512*0.01) * 2975
 SAMPLE_ROUNDS = 5
-HEURISTIC = "random"
+HEURISTIC = "ripu"
 VIZ_SIZE = 20
 
 custom_imports = dict(
@@ -40,10 +40,15 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="viz_exp_heursitics_random"
+        dir="viz_exp_heursitics_ripu_no_entropy"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
+    heuristic_cfg=dict(
+        k=1,
+        use_entropy=False,
+        categories=19 # Cityscapes and GTAV have 19 classes
+    )
 )
 
 """ ===== Workflow and Runtime configs ===== """
@@ -53,7 +58,7 @@ runner = dict(
     sample_mode="pixel", 
     sample_rounds=SAMPLE_ROUNDS, 
 )
-evaluation = dict(interval=QUERY_EPOCH//4, by_epoch=False, metric='mIoU', pre_eval=True)
+evaluation = dict(interval=QUERY_EPOCH, by_epoch=False, metric='mIoU', pre_eval=True)
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
 optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0005)
 optimizer_config = dict()
@@ -68,7 +73,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'fpnR50_gtav_exp_heuristics_random',
+                name=f'fpnR50_gtav_exp_heuristics_region_impurity',
             )
         )
     ]
