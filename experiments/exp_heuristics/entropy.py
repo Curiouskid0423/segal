@@ -35,12 +35,13 @@ active_learning = dict(
             initial_label_pixels=BUDGET,
             sample_evenly=True,
             ignore_index=255, # any value other than 255 fails due to seg_pad_val in Pad transform
+            entropy_prop=.25,
         ),
     ),
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="viz_exp_heursitics_entropy"
+        dir="viz_exp_heursitics_entropy"            # <--- change this
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,

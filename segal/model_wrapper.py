@@ -23,6 +23,7 @@ from segal.active.heuristics import AbstractHeuristic
 # from torch.utils.data.dataloader import default_collate
 # from mmcv.engine import collect_results_cpu
 
+
 def map_on_tensor(fn, val):
     """Map a function on a Tensor or a list of Tensors"""
     if isinstance(val, Sequence):
@@ -30,6 +31,7 @@ def map_on_tensor(fn, val):
     elif isinstance(val, dict):
         return {k: fn(v) for k, v in val.items()}
     return fn(val)
+
 
 def collect_results_gpu(result_part, size):
     """Collect results under gpu mode.
@@ -80,6 +82,7 @@ def collect_results_gpu(result_part, size):
         ordered_results = ordered_results[:size]
         return ordered_results
 
+
 class ModelWrapper:
     """
     Wrapper created to ease the training/testing/loading.
@@ -97,9 +100,9 @@ class ModelWrapper:
         self.sample_settings = getattr(cfgs.active_learning.settings, self.sample_mode)
         self.gpu_ids = cfgs.gpu_ids
         self.seed = cfgs.seed
-        
+
     def predict_on_dataset_generator(
-        self, dataset, batch_size, iterations, use_cuda, workers = 4,
+        self, dataset, batch_size, iterations, use_cuda, workers=4,
         collate_fn: Optional[Callable] = None,
         half=False, verbose=True,
     ):
@@ -124,7 +127,7 @@ class ModelWrapper:
         """
         self.eval()
         raise NotImplementedError
-    
+
     def batch_preprocess(self, data_batch):
         """ Preprocess data batch for type compatibility """
 
@@ -141,7 +144,7 @@ class ModelWrapper:
         return ext_img, ext_img_meta
 
     def predict_on_dataset(
-        self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
+            self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
         """
         Make predictions on the unlabelled pool during the sampling phase.
         Image sampling mode:
@@ -157,18 +160,18 @@ class ModelWrapper:
         self.query_dataset_size = len(dataset)
         test_loader = build_dataloader(
             dataset,
-            samples_per_gpu=1, 
+            samples_per_gpu=1,
             workers_per_gpu=self.cfg.data.workers_per_gpu,
             shuffle=False,
-            num_gpus= len(self.gpu_ids),
+            num_gpus=len(self.gpu_ids),
             dist=True if len(self.gpu_ids) > 1 else False,
             seed=self.seed,
             drop_last=False,
-            pin_memory=False  
+            pin_memory=False
         )
 
         results = []
-        
+
         rank, world_size = get_dist_info()
         if rank == 0:
             prog_bar = mmcv.ProgressBar(len(dataset))
@@ -183,23 +186,23 @@ class ModelWrapper:
 
             if self.sample_mode == 'pixel':
                 data_batch, mask = data_batch
-                
+
             with torch.no_grad():
                 ext_img, ext_img_meta = self.batch_preprocess(data_batch)
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
                 scores = heuristic.get_uncertainties(outputs)
-                
+
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
                     for i, score in enumerate(scores):
-                        score[mask[i].numpy()] = -1.0 # Mask labeled pixels (0 is the lowest uncertainty value)
+                        score[mask[i].numpy()] = -1.0  # Mask labeled pixels (0 is the lowest uncertainty value)
                         if sample_evenly:
                             new_query = self.extract_query_indices(uc_map=score)
                             results.append(new_query)
                         else:
                             results.append(score)
 
-                elif self.sample_mode == 'image': 
+                elif self.sample_mode == 'image':
                     results.extend(scores)
                 else:
                     raise NotImplementedError("sample_mode has to be either pixel or image currently")
@@ -214,22 +217,22 @@ class ModelWrapper:
             results = self.extract_query_indices(np.array(results), sample_evenly=False)
 
         # collect results from all devices (GPU)
-        results = np.array(results, dtype=np.bool)
+        results = np.array(results, dtype=bool)
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
-        
+
         # For rank 0 worker
         if len(all_results) > 0:
             return all_results
 
-        # For workers that are not rank 0 
+        # For workers that are not rank 0
         if self.sample_mode == 'pixel':
             ds = dataset[0][0]['gt_semantic_seg'][0].data.squeeze().size()
             return np.zeros(shape=(len(dataset), ds[0], ds[1]))
         else:
             return np.zeros(len(dataset))
 
-    def get_pixels_by_budget(self, budget: int, uc_map:torch.Tensor, sample_evenly: bool):
+    def get_pixels_by_budget(self, budget: int, uc_map: torch.Tensor, sample_evenly: bool):
         """
         The method is for pixel-based sampling (not image-based).
 
@@ -237,10 +240,10 @@ class ModelWrapper:
         return the top K pixels to label according to the budget and `sample_threshold`
         Returns (value, index) using torch.Tensor.topk API.
         """
-        
+
         top_k_percent = None
         unit = reduce(lambda x, y: x*y, uc_map.shape)
-        
+
         if hasattr(self.sample_settings, 'sample_threshold'):
             top_k_percent = self.sample_settings['sample_threshold']
             assert top_k_percent > 0., \
@@ -251,10 +254,22 @@ class ModelWrapper:
                 selection_pool = budget // self.query_dataset_size
             else:
                 selection_pool = budget
-                
-        values, indices = uc_map.flatten().topk(k=selection_pool, dim=-1, largest=True)
-        indices = indices.cpu().numpy()
-        if top_k_percent != None: # sample_threshold=True
+
+        if self.cfg.active_learning.heuristic == 'entropy' and hasattr(self.sample_settings, 'entropy_prop'):
+            entropy_prop = float(self.sample_settings['entropy_prop'])
+            print("Using entropy sampling with proportion: ", entropy_prop)
+            entropy_selection_pool = int(selection_pool * entropy_prop)
+            random_selection_pool = selection_pool - entropy_selection_pool
+            values, entropy_indices = uc_map.flatten().topk(k=entropy_selection_pool, dim=-1, largest=True)
+            sorted_indices = np.argsort(uc_map.flatten().cpu().numpy())[::-1]
+            sorted_indices = sorted_indices[entropy_selection_pool:]
+            random_indices = np.random.choice(sorted_indices, size=random_selection_pool, replace=False)
+            indices = np.concatenate([entropy_indices.cpu().numpy(), random_indices])
+        else:
+            values, indices = uc_map.flatten().topk(k=selection_pool, dim=-1, largest=True)
+            indices = indices.cpu().numpy()
+
+        if top_k_percent != None:  # sample_threshold=True
             if sample_evenly:
                 query_size = budget // unit
                 indices = np.random.choice(indices, size=query_size, replace=False)
@@ -263,7 +278,6 @@ class ModelWrapper:
                 indices = np.random.choice(indices, size=budget, replace=False)
         indices_of_original_shape = np.unravel_index(indices, uc_map.shape)
         return indices_of_original_shape
-
 
     def extract_query_indices(self, uc_map, sample_evenly=True):
         """
@@ -285,9 +299,9 @@ class ModelWrapper:
             (not sample_evenly and len(uc_map.shape) == 3)
 
         budget = self.sample_settings.budget_per_round
-        uc_map_cuda = torch.FloatTensor(uc_map).cuda() 
+        uc_map_cuda = torch.FloatTensor(uc_map).cuda()
         indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
-        new_query = np.zeros(uc_map.shape, dtype=np.bool)
+        new_query = np.zeros(uc_map.shape, dtype=bool)
         new_query[indices] = True
         return new_query
 
