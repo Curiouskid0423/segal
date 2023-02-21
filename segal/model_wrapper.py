@@ -308,7 +308,7 @@ class ModelWrapper:
             indices = self.get_regions_by_budget(budget, uc_map_cuda, sample_evenly)
         else:
             raise NotImplementedError("Not recognized sampling unit.")
-        new_query = np.zeros(uc_map.shape, dtype=np.bool)
+        new_query = np.zeros(uc_map.shape, dtype=bool)
         new_query[indices] = True
         return new_query
 
