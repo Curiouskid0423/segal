@@ -178,7 +178,7 @@ class ActiveLearningDataset(OracleDataset):
 
     def reset_labelled(self):
         """Reset the label map."""
-        self.labelled_map = np.zeros(len(self.dataset), dtype=np.bool)
+        self.labelled_map = np.zeros(len(self.dataset), dtype=bool)
 
     def get_raw(self, idx: int):
         """Get a datapoint from the underlying dataset."""
