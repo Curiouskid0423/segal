@@ -1,16 +1,16 @@
 """ mmcv base configs """
-BASE = '../' 
+BASE = '../../' 
 DATA_FILE = f'{BASE}dataset/cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}../configs/_base_/models/fpn_r50.py'
-SPG = 1  # Sample per GPU
-GPU = 8
+SPG = 1 # Sample per GPU
+GPU = 2
 """ active learning configs """
-QUERY_EPOCH = 20
-BUDGET = int(256*512*0.01) * 2975
-SAMPLE_ROUNDS = 5
-HEURISTIC = "sparsity"
-VIZ_SIZE = 10
+QUERY_EPOCH = 10
+BUDGET = int(256*512*0.005) * 2975
+SAMPLE_ROUNDS = 10
+HEURISTIC = "entropy"
+VIZ_SIZE = 20
 
 custom_imports = dict(
     imports=[
@@ -20,6 +20,7 @@ custom_imports = dict(
 
 # work_dir = 'work_dir'
 load_from = 'experiments/gtv_ckpt_fpnR50.pth'
+data = dict(samples_per_gpu=SPG, workers_per_gpu=2)
 
 _base_ = [ 
     MODEL_FILE, 
@@ -40,15 +41,10 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="viz_exp_heursitics_sparsity_18"
+        dir="viz_setC_entropy_pix_r10"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
-    heuristic_cfg=dict(
-        k=1,
-        inflection=0.33,
-        alpha=1.2
-    )
 )
 
 """ ===== Workflow and Runtime configs ===== """
@@ -58,10 +54,9 @@ runner = dict(
     sample_mode="pixel", 
     sample_rounds=SAMPLE_ROUNDS, 
 )
-evaluation = dict(interval=QUERY_EPOCH//4, by_epoch=False, metric='mIoU', pre_eval=True)
+evaluation = dict(interval=QUERY_EPOCH//2, by_epoch=False, metric='mIoU', pre_eval=True)
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
-optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0005)
-# optimizer = dict(type='Adam', lr=2e-4, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.0005, momentum=0.9, weight_decay=0.0005)
 optimizer_config = dict()
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=True)
 
@@ -74,7 +69,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'fpnR50_gtav_sparsity_18',
+                name=f'fpnR50_gtav_setC_entropy_pix_r10',
             )
         )
     ]

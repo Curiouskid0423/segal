@@ -4,7 +4,7 @@ RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}../configs/_base_/models/upernet_vit-b16_ln_mln.py'
 SCHEDULE_FILE = f'{BASE}../configs/_base_/schedules/schedule_160k.py'
 SPG = 2 # Sample per GPU
-GPU = 4
+GPU = 8
 
 custom_imports = dict(
     imports=[
@@ -18,6 +18,7 @@ _base_ = [
     RUNTIME_FILE,
     SCHEDULE_FILE
 ]
+data = dict(samples_per_gpu=SPG, workers_per_gpu=2)
 
 model = dict(
     pretrained='experiments/vit/ckpts/vit-base-p16_in1k-224.pth',
