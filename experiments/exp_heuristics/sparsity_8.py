@@ -19,7 +19,7 @@ custom_imports = dict(
 )
 
 # work_dir = 'work_dir'
-load_from = 'experiments/gtv_ckpt_fpnR50.pth'
+load_from = 'experiments/gtav_ckpt_fpnR50.pth'
 
 _base_ = [ 
     MODEL_FILE, 

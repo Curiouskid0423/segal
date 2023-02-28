@@ -11,7 +11,8 @@ SegAL is a comprehensive active learning baseline system based on [OpenMMLab](ht
 ```
 configs/            // mmseg config files
 experiments/        // experiment related files
-dist_train.sh    // training script
+dist_train.sh       // training script
+dist_train_multiple.sh    // helper script to pipeline training processes
 segal/
 |-- train_active_learning.py
 |-- model_wrapper.py
@@ -28,9 +29,19 @@ segal/
 |-- utils
 |   `-- train.py
 `-- runner
-    `-- active_learning_runner.py
+    |-- active_learning_runner.py
+    `-- utils.py
 ```
 #### Development Notes
+
+- **2023.02.27** Added several functionalities:
+    - allowed `workflow` to define multiple nested tuples to **sample irregularly**, as did in RIPU paper
+    - allowed learning rate to schedule by both `iter` and `epochs` and tested both cases under both `reset_each_round=[True, False]`
+    - moved `RIPU_Net` and `Sparsity_Net` onto GPU
+    - fixed a critical bug for `ignore_index` in `train_active_learning.py`
+    - re-enabled image-based sampling with all the new configurations -- an intermediate step to building *Continuous Active Learning* framework
+    - refactored code in `active_learning_runner.py`
+    - in process of optimizing GPU memory usage. currently with just 1 sample_per_gpu and DeepLabv3+ R101 backbone could lead to `CUDA_OUT_OF_MEMORY` error constantly at the end of the first epoch. removed uncessary `pool` variable creation in `pixel` sampling. removed unnecessary `deepcopy`.
 - **2022.11.11** Provably solved the masking indeterministic behavior by writing a common pickle file in a temporary folder `queries_save_dir`. With the same set of hyperparameters (did not tune much), the model achieves 61.2 mean IoU with 50 epochs on Cityscapes. Full reproduction run of Pixel detailed below.
     | # labelled pixels per img (% annotation)  | mean IoU |
     | ------------- | ------------- |

@@ -219,7 +219,7 @@ class RegionImpurity(AbstractHeuristic):
         super().__init__(shuffle_prop, reverse=True)
         self.mode = mode
         self.use_entropy = use_entropy
-        self.ripu_net = RIPU_Net(size=2*k+1, channels=categories)
+        self.ripu_net = RIPU_Net(size=2*k+1, channels=categories).cuda()
 
     def compute_score(self, predictions, **kwargs):
         """
@@ -232,7 +232,7 @@ class RegionImpurity(AbstractHeuristic):
 
         softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
         assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
-        scores = self.ripu_net(softmax_pred.cpu(), use_entropy=self.use_entropy) # should be (b, h, w)
+        scores = self.ripu_net(softmax_pred, use_entropy=self.use_entropy) # should be (b, h, w)
         return scores
 
 class Sparsity(AbstractHeuristic):
@@ -250,7 +250,7 @@ class Sparsity(AbstractHeuristic):
             size=2*k+1, 
             alpha=alpha,            # sigmoid softness
             inflection=inflection   # inflection point
-        )
+        ).cuda()
 
     
     def compute_score(self, predictions, mask):
@@ -264,5 +264,5 @@ class Sparsity(AbstractHeuristic):
         """
         
         softmax_pred = to_prob(predictions) # [B, C, H, W]
-        scores = self.sparsity_net(softmax_pred.cpu(), mask)
+        scores = self.sparsity_net(softmax_pred, mask)
         return scores

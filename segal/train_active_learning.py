@@ -11,6 +11,9 @@ import time
 import warnings
 import torch
 import torch.distributed as dist
+from torch.utils.data import Dataset
+from argparse import Namespace
+from typing import Dict
 
 """ MMCV """
 import mmcv
@@ -24,7 +27,7 @@ from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
-from segal.utils.train import train_al_segmentor
+from segal.utils.train import train_al_segmentor, flatten_nested_tuple_list as flatten, is_nested_tuple
 
 
 def parse_args():
@@ -113,6 +116,43 @@ def parse_args():
 
     return args
 
+def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
+
+    datasets = {}
+    
+    if is_nested_tuple(config.workflow[0]):
+        assert len(config.workflow) == config.runner.sample_rounds, \
+            "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
+    
+    flow = flatten(config.workflow)
+
+    assert all([mode in ['train', 'val', 'query'] for (mode, _) in flow]), \
+        "workflow has to be either train, val, or query"
+
+    for mode, _ in flow:
+        data_cfg = getattr(config.data, mode)
+
+        if mode == 'query' and config.runner.sample_mode == 'image':
+            continue
+        
+        # make sure to use train pipeline cuz test pipeline does not load ground truth
+        if mode == 'val':
+            data_cfg = copy.deepcopy(data_cfg)
+            data_cfg.pipeline = config.data.train.pipeline
+        # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
+        if not (mode in datasets.keys()):
+            datasets[mode] = build_dataset(data_cfg)
+
+    return datasets
+
+def insert_ignore_index(config: Namespace, value: int):
+    assert hasattr(config, "model")
+    for k in config.model.keys():
+        entry = getattr(config.model, k)
+        if 'loss_decode' in entry:
+            entry.ignore_index = value
+            entry.loss_decode.avg_non_ignore=True
+
 def main():
 
     """ PART 1. Argument Passing """
@@ -120,11 +160,10 @@ def main():
 
     cfg = Config.fromfile(args.config)
 
-    # Set ignore_index, in the case of pixel-based sampling, from
-    # cfg.active_learning to cfg.model before instantiation
-    if cfg.runner.type=='ActiveLearningRunner' and cfg.runner.sample_mode == 'pixel':
+    # manually insert ignore_index for pixel sampling (and region-based in future development)
+    if cfg.runner.type=='ActiveLearningRunner' and cfg.runner.sample_mode != 'image':
         ignore_index = cfg.active_learning.settings.pixel.ignore_index
-        setattr(cfg.model.decode_head, 'ignore_index', ignore_index)
+        insert_ignore_index(config=cfg, value=ignore_index)
 
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
@@ -180,13 +219,14 @@ def main():
     env_info_dict = collect_env()
     env_info = '\n'.join([f'{k}: {v}' for k, v in env_info_dict.items()])
     dash_line = '-' * 60 + '\n'
-    logger.info('Environment info:\n' + dash_line + env_info + '\n' +
-                dash_line)
+    # Temporarily commented out since it's taking up space.
+    # logger.info('Environment info:\n' + dash_line + env_info + '\n' + dash_line)
     meta['env_info'] = env_info
 
     # log some basic info
     logger.info(f'Distributed training: {distributed}')
-    logger.info(f'Config:\n{cfg.pretty_text}')
+    # Temporarily commented out since it's taking up space.
+    # logger.info(f'Config:\n{cfg.pretty_text}')
 
     # set random seeds
     seed = init_random_seed(args.seed)
@@ -213,31 +253,22 @@ def main():
             'avoid this error.')
         model = revert_sync_batchnorm(model)
 
-    # log the model summary. temporarily commented out since it's taking up space.
+    # Temporarily commented out since it's taking up space.
     # logger.info(model)
 
     """ PART 3. Dataset """
-    datasets = []
-    assert all([mode in ['train', 'val', 'query'] for (mode, _) in cfg.workflow]), \
-        "Workflow has to be either train, val, or query."
-
-    for mode, _ in cfg.workflow:
-        data_cfg = getattr(cfg.data, mode)
-        # make sure to use train pipeline cuz test pipeline does not load ground truth
-        if mode == 'val':
-            data_cfg = copy.deepcopy(data_cfg)
-            data_cfg.pipeline = cfg.data.train.pipeline
-        datasets.append(build_dataset(data_cfg))
+    datasets = preprocess_datasets(config=cfg)
+    example_dataset = datasets['train']
 
     if cfg.checkpoint_config is not None:
         cfg.checkpoint_config.meta = dict(
             mmseg_version=f'{__version__}+{get_git_hash()[:7]}',
             config=cfg.pretty_text,
-            CLASSES=datasets[0].CLASSES,
-            PALETTE=datasets[0].PALETTE)
+            CLASSES=example_dataset.CLASSES,
+            PALETTE=example_dataset.PALETTE)
 
     # add an attribute for visualization convenience
-    model.CLASSES = datasets[0].CLASSES
+    model.CLASSES = example_dataset.CLASSES
     # passing checkpoint meta for saving best checkpoint
     meta.update(cfg.checkpoint_config.meta)
     

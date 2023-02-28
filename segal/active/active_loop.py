@@ -16,6 +16,7 @@ from mmcv.runner import get_dist_info
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 from PIL import Image
+import gc
 
 CWD = os.getcwd()
 
@@ -131,6 +132,8 @@ class ActiveLearningLoop:
                     pickle.dump(new_query_mask, fs)
         self.num_labelled_pixels += self.sample_settings['budget_per_round']
         
+        gc.collect()
+        
         return True
 
     def step(self, pool=None) -> bool:
@@ -140,11 +143,11 @@ class ActiveLearningLoop:
         Return: 
         True if successfully stepped, False if not (thus stop training)
         """
-        if pool == None:
-             pool = self.dataset.pool
-        assert pool is not None, "self.dataset.pool should not be None"
 
         if self.sample_mode == 'image':
+            if pool == None:
+                pool = self.dataset.pool
+            assert pool is not None, "self.dataset.pool should not be None"
             if len(pool) > 0:
                 # Whether max sample size is capped
                 if self.max_sample != -1 and self.max_sample < len(pool):
@@ -202,7 +205,7 @@ class ActiveLearningLoop:
         if rank == 0:
             epoch_vis_dir = osp.join(self.vis_path, f"round{self.round}")
             os.makedirs(epoch_vis_dir, exist_ok=True)
-            self.logger.info("Saving visualization...")
+            self.logger.info("saving visualization...")
             for v in self.vis_indices:
                 # original image (256x512 for Cityscapes) and corresponding mask
                 ori, mask = self.dataset.get_raw(v), self.dataset.masks[v]

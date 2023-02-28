@@ -6,6 +6,8 @@ Equivalent to mmseg/apis/train.py
 import copy
 from argparse import Namespace
 import torch 
+from torch.utils.data import Dataset
+from typing import Dict, List
 import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -19,6 +21,20 @@ from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
 from segal.runner import *
 from segal.hooks import *
+
+def is_nested_tuple(x):
+    return isinstance(x, tuple) and all([isinstance(it, tuple) for it in x])
+
+def flatten_nested_tuple_list(tuple_list: List):
+    result = []
+    if not isinstance(tuple_list, list):
+        raise ValueError
+    for tp in tuple_list:
+        if is_nested_tuple(tp):
+            result.extend(flatten_nested_tuple_list(list(tp)))
+        else:
+            result.append(tp)
+    return result
 
 def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp) -> BaseRunner:
     """
@@ -39,17 +55,21 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
             'please set `runner` in your config.', UserWarning)
             
     runner_cfg = copy.deepcopy(cfg.runner)
+
+    # set max_epochs in runner's config
     if runner_cfg.type == 'ActiveLearningRunner':
-        # set query_epochs
-        for mode, iteration in cfg.workflow:
-            if mode == 'train':
-                runner_cfg.query_epochs = iteration
-        
-        # set `max_epochs` according to `reset_each_round` variable
-        cfg_al = cfg.active_learning
-        runner_cfg.max_epochs = runner_cfg.query_epochs
-        if not (hasattr(cfg_al, "reset_each_round") and cfg_al.reset_each_round):
-            runner_cfg.max_epochs *= runner_cfg.sample_rounds
+        if not is_nested_tuple(cfg.workflow[0]):
+            # only consider the case where `reset_each_round = True`, in the case
+            # where it is False, runner.run with modify max_epochs at each round
+            query_epochs = None
+            for mode, iteration in cfg.workflow:
+                if mode == 'train':
+                    query_epochs = iteration
+            assert query_epochs != None
+            runner_cfg.max_epochs = runner_cfg.sample_rounds * query_epochs
+        else:
+            flow = flatten_nested_tuple_list(cfg.workflow)
+            runner_cfg.max_epochs = sum([ep for mode, ep in flow if mode == 'train'])
             
     runner = build_runner(
         runner_cfg,
@@ -81,7 +101,6 @@ def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
         distributed (bool):     boolean to indicate whether to use distributed training
     """
 
-    # FIXME: make sure that ignore_index in pixel-sampling works with validation set too
     """Set up eval / validate hooks"""
     if validate:
         eval_dataset = build_dataset(cfg.data.val, dict(test_mode=True))
@@ -90,7 +109,8 @@ def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
             samples_per_gpu=1,
             workers_per_gpu=cfg.data.workers_per_gpu,
             dist=distributed,
-            shuffle=False)
+            shuffle=False
+        )
         eval_cfg = cfg.get('evaluation', {})
         # Switch runner
         eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
@@ -139,24 +159,25 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
     return model
 
-def setup_dataloaders(cfg: Namespace, distributed: bool, datasets):
+def setup_dataloaders(cfg: Namespace, distributed: bool, datasets: Dict[str, Dataset]):
     """
     Create a list of dataloaders given datasets. This method is only 
-    compatible with EpochBasedRunner (not ActiveLearningRunner). The 
+    compatible with Iter / EpochBasedRunner (not ActiveLearningRunner). The 
     default MMCV code passes in dataloaders instead of dataset objects 
     since dataloaders don't need to be reinitialized during training.
 
     Args:
         cfg (NameSpace):        config file provided by user and processed with MMCV
         distributed (bool):     boolean to indicate whether to use distributed training
-        datasets (List):  list of datasets   
+        datasets (Dict):        dictionary of datasets. each entry is (mode, Dataset)
     """
 
     loader_cfg = dict(
         num_gpus=len(cfg.gpu_ids),
         dist=distributed,
         seed=cfg.seed,
-        drop_last=True)
+        drop_last=True
+    )
 
     # The overall dataloader settings
     loader_cfg.update({
@@ -168,10 +189,10 @@ def setup_dataloaders(cfg: Namespace, distributed: bool, datasets):
         ]
     })
     train_loader_cfg = {**loader_cfg, **cfg.data.get('train_dataloader', {})}
-    return [build_dataloader(ds, **train_loader_cfg) for ds in datasets]
+    return [build_dataloader(ds, **train_loader_cfg) for ds in datasets.values()]
 
 def train_al_segmentor(
-    model, datasets, cfg: Namespace, distributed=False,
+    model, datasets: Dict[str, Dataset], cfg: Namespace, distributed=False,
     validate=False, timestamp=None, meta=None):
 
     """
@@ -179,7 +200,7 @@ def train_al_segmentor(
 
     Args:
         model (BaseSegmentor):  the segmentation backbone
-        datasets (List):  list of datasets   
+        datasets (Dict):        dictionary of datasets. each entry is (mode, Dataset)
         cfg (Namespace):        config file provided by user and processed with MMCV
         distributed (bool):     boolean to indicate whether to use distributed training
         validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
@@ -190,7 +211,7 @@ def train_al_segmentor(
 
     """Put models onto GPUs"""
     model = setup_model(cfg, model, distributed)
-    
+
     """Set up runner instance and optimizer"""
     optimizer = build_optimizer(model, cfg.optimizer)
     runner = setup_runner(cfg, model, optimizer, logger, meta, timestamp)
@@ -210,10 +231,6 @@ def train_al_segmentor(
 
     if cfg.runner.type == 'ActiveLearningRunner':
         runner.run(datasets, configs=cfg)
-    # elif cfg.runner.type == 'EpochBasedRunner':
     else:
         data_loaders = setup_dataloaders(cfg, distributed, datasets)
         runner.run(data_loaders, configs=cfg, workflow=cfg.workflow)
-    # else:
-    #     raise NotImplementedError(
-    #         f"Supports for IterBasedRunner is still in development. Please use ActiveLearningRunner for the time being.")

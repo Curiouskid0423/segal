@@ -8,7 +8,7 @@ for unlabeled dataset.
 """
 from itertools import zip_longest
 import torch.utils.data as torchdata
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 import numpy as np
 from copy import deepcopy
 
@@ -60,13 +60,12 @@ class ActiveLearningDataset(OracleDataset):
         else:
             self.labelled_map = np.zeros(len(dataset), dtype=int)
         
-        # Create masks if sample_mode is `pixel`
         self.dataset = dataset
 
         # Reset data augmentation for the unlabelled pool (test pipeline) (image-based sampling)
         self.cfg_data = deepcopy(cfg_data)
-        if cfg_data is not None:
-            self.logger.info("Creating unlabelled pool dataset.")
+        if cfg_data is not None and self.sample_mode == 'image':
+            self.logger.info("creating unlabelled pool dataset.")
             self.pool_dataset = build_dataset(self.cfg_data['train'])
        
         self.make_unlabelled = make_unlabelled
@@ -132,7 +131,7 @@ class ActiveLearningDataset(OracleDataset):
             return True
         return False
 
-    def label_all_with_mask(self, mask_shape):
+    def label_all_with_mask(self, mask_shape: Tuple[int, int], mask_type: str):
         """ 
         For pixel-based sampling, all images will be placed in labelled pool initially
         but only labelled sparsely on randomly selected ones. 
@@ -145,7 +144,7 @@ class ActiveLearningDataset(OracleDataset):
         init_pixels = self.settings['initial_label_pixels'] // N
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
-        self.logger.info(f"Creating masks for pixel-based sampling mode. Start with {init_pixels} per image.")
+        self.logger.info(f"created masks for `{mask_type}` dataset. start with {init_pixels} per image.")
 
         self.masks = [np.random.permutation(h * w).reshape(h, w) < init_pixels for _ in range(N)]
         self.masks = np.array(self.masks)

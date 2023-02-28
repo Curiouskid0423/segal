@@ -4,7 +4,7 @@ custom_imports = dict(
     ], allow_failed_imports=False
 )
 
-load_from = "experiments/gtv_ckpt_fpnR50.pth"
+load_from = "experiments/gtav_ckpt_fpnR50.pth"
 data = dict(samples_per_gpu=1, workers_per_gpu=2)
 
 _base_ = [ 

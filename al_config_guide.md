@@ -11,7 +11,7 @@ custom_imports = dict(
     ], allow_failed_imports=False
 )
 
-load_from = 'experiments/gtv_ckpt_fpnR50.pth'
+load_from = 'experiments/gtav_ckpt_fpnR50.pth'
 
 _base_ = [ 
     MODEL_FILE, 
@@ -32,7 +32,7 @@ active_learning = dict(
             budget_per_round=BUDGET,           
             initial_label_pixels=BUDGET,
             sample_evenly=True,
-            ignore_index=255, # any other value fails due to seg_pad_val in Pad transform
+            ignore_index=255, # value chosen to be consistent with `seg_pad_val` in Pad transform
         ),
     ),
     visualize = dict(
@@ -88,7 +88,22 @@ log_config = dict(
     - `reset_each_round`: A binary variable to determine whether to reset the weights after each round of sampling is performed.
     - `heuristics`: Defines the sampling heuristic function.
     - `heuristics_cfg`: Currently only supported when using `RIPU` heuristics, as illustrated in the example above. Defines the hyperparameters in the desired heuristic function. 
-- `workflow`: The workflow config works the same way as the standard `mmseg` configs, but with an additional **query** tuple after the "train" tuple. In the above example, the model queries for new labels every QUERY_EPOCH epoch.  
+- `workflow`: The workflow config works the same way as the standard `mmseg` configs, but allows a **query** tuple after the **train** tuple. There are two cases:
+    - **sample regularly**
+    When sampling regularly, an example workflow will be `[('train', K), ('query', 1)]`. This means train for K epochs after each round of sampling. Effectively, the total epochs over the entire training will be `K * sample_rounds`. In the above pseudocode, the model queries for new labels every QUERY_EPOCH epoch.  
+    - **sample irregularly**
+    Oftentimes it is more optimal to sample irregularly. For instance, in RIPU, when performing region-based sampling they ran 40k iterations in total, but sample at `[10k, 12k, 14k, 18k, 20k]`. To sample irregularly, ie. at manually defined epoch, replace `workflow` according to this example: 
+        ```
+        workflow = [
+            (('train', 10), ('query', 1)),
+            (('train', 2),  ('query', 1)),
+            (('train', 2),  ('query', 1)),
+            (('train', 2),  ('query', 1)),
+            (('train', 14),)
+        ] 
+        ```
+        In this example, there are 5 sample rounds (considering the `initial_pool`) and the total epochs is 30 but allocated heavily at the beginning and the end. 
+    
 - `runner`
     - `type`: Use the customized runner `ActiveLearningRunner` in Segal, which allows iteratively adding new labels into the dataloader.
     - `sample_mode`: Define the sampling mode, either "pixel" or "image". Will also allow region-based sampling in the near future. 

@@ -166,8 +166,7 @@ class ModelWrapper:
             num_gpus=len(self.gpu_ids),
             dist=True if len(self.gpu_ids) > 1 else False,
             seed=self.seed,
-            drop_last=False,
-            pin_memory=False
+            drop_last=False
         )
 
         results = []
@@ -190,7 +189,10 @@ class ModelWrapper:
             with torch.no_grad():
                 ext_img, ext_img_meta = self.batch_preprocess(data_batch)
                 outputs = model.module.encode_decode(ext_img, ext_img_meta)
-                scores = heuristic.get_uncertainties(outputs, mask=mask)
+                scores = heuristic.get_uncertainties(
+                    outputs, 
+                    mask = None if self.sample_mode == 'image' else mask
+                )
                 
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
@@ -201,7 +203,6 @@ class ModelWrapper:
                             results.append(new_query)
                         else:
                             results.append(score)
-
                 elif self.sample_mode == 'image':
                     results.extend(scores)
                 else:
@@ -213,7 +214,7 @@ class ModelWrapper:
                 for _ in range(completed):
                     prog_bar.update()
 
-        if not sample_evenly:
+        if hasattr(self.sample_settings, 'sample_evenly') and not sample_evenly:
             results = self.extract_query_indices(np.array(results), sample_evenly=False)
 
         # collect results from all devices (GPU)
