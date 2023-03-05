@@ -18,11 +18,11 @@ from typing import Dict
 """ MMCV """
 import mmcv
 from mmcv.cnn.utils import revert_sync_batchnorm
-from mmcv.runner import get_dist_info, init_dist
+from mmcv.runner import get_dist_info, init_dist, wrap_fp16_model
 from mmcv.utils import Config, DictAction, get_git_hash
 """ MMSegmentation """
 from mmseg import __version__
-from mmseg.apis import init_random_seed, set_random_seed, train_segmentor
+from mmseg.apis import init_random_seed, set_random_seed
 from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
@@ -118,6 +118,25 @@ def parse_args():
 
 def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
 
+    def check_flip_before_crop(transforms):
+        # edit_types = ['Resize', 'Flip', 'Crop']
+        # for tf in transforms:
+        #     if any([e in tf['type'] for e in edit_types]):
+        #         if not ('Mask' in tf['type']):
+        #             print(tf['type'])
+        #             return False
+        # return True
+        if mode != 'train' \
+            or config.runner.type in ['IterBasedRunner', 'EpochBasedRunner']:
+            return True
+        flip_idx, crop_idx = None, None
+        for idx, tf in enumerate(transforms):
+            if 'Flip' in tf['type']:
+                flip_idx = idx
+            elif 'Crop' in tf['type']:
+                crop_idx = idx
+        return flip_idx==None or crop_idx==None or flip_idx < crop_idx
+
     datasets = {}
     
     if is_nested_tuple(config.workflow[0]):
@@ -132,16 +151,20 @@ def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
     for mode, _ in flow:
         data_cfg = getattr(config.data, mode)
 
+        assert isinstance(data_cfg.pipeline, list)
+        assert check_flip_before_crop(data_cfg.pipeline)
+
+        # no need to independently create a `query` dataset in `image-sampling`
         if mode == 'query' and config.runner.sample_mode == 'image':
             continue
-        
         # make sure to use train pipeline cuz test pipeline does not load ground truth
         if mode == 'val':
             data_cfg = copy.deepcopy(data_cfg)
             data_cfg.pipeline = config.data.train.pipeline
         # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
         if not (mode in datasets.keys()):
-            datasets[mode] = build_dataset(data_cfg)
+            datasets[mode] = build_dataset(
+                data_cfg, dict(test_mode=False if mode=='train' else True))
 
     return datasets
 
@@ -244,6 +267,10 @@ def main():
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
+
+    fp16_cfg = cfg.get('fp16', None)
+    if fp16_cfg is not None:
+        wrap_fp16_model(model)
 
     # SyncBN is not support for DP
     if not distributed:

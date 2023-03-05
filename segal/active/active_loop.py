@@ -112,8 +112,6 @@ class ActiveLearningLoop:
                 updated_mask = pickle.load(fs)
                 self.logger.info(f"Loading from queries from {file_path}")
                 assert isinstance(updated_mask, np.ndarray), 'query mask should be saved as np.array type.'
-                # print(f" [rank {rank}] loaded updated_mask, shape ", updated_mask.shape)
-                # print(f" [rank {rank}] updated_mask nonzero() count ", updated_mask.nonzero()[0].shape)
                 self.query_dataset.masks = updated_mask
 
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
@@ -208,7 +206,7 @@ class ActiveLearningLoop:
             self.logger.info("saving visualization...")
             for v in self.vis_indices:
                 # original image (256x512 for Cityscapes) and corresponding mask
-                ori, mask = self.dataset.get_raw(v), self.dataset.masks[v]
+                ori, mask = self.query_dataset.get_raw(v), self.query_dataset.masks[v]
                 ori = self.revert_transforms(ori, ori['img_metas'].data)
                 file_name = osp.join(epoch_vis_dir, f"{v}.png")
                 

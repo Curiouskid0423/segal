@@ -18,7 +18,7 @@ _base_ = [
     RUNTIME_FILE,
     SCHEDULE_FILE
 ]
-data = dict(samples_per_gpu=SPG, workers_per_gpu=2)
+data = dict(samples_per_gpu=SPG, workers_per_gpu=1)
 
 model = dict(
     pretrained='experiments/vit/ckpts/vit-base-p16_in1k-224.pth',
@@ -61,7 +61,7 @@ data = dict(samples_per_gpu=SPG, workers_per_gpu=2)
 evaluation = dict(interval=2000, metric='mIoU', pre_eval=True)
 
 log_config = dict(
-    interval=20,
+    interval=500,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(

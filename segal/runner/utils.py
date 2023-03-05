@@ -24,7 +24,7 @@ def recursively_set_is_init(model: BaseModule, value: bool):
             m._is_init = value
             recursively_set_is_init(model=m, value=value)
 
-def adjust_mask(self, mask: torch.Tensor, meta: List, scale=None):
+def adjust_mask(mask: torch.Tensor, meta: List, scale=None):
     """
     Masks are created in the size of original input (e.g. 256x512 or 1024x2048), and therefore 
     requires adjustments during training transformations such as RandomFlip or Resizing. 
@@ -33,7 +33,7 @@ def adjust_mask(self, mask: torch.Tensor, meta: List, scale=None):
     Args:
         mask (torch.Tensor):    Mask object to be edited
         meta (List):            Meta-information containing the transformation details
-        scale (bool):           A boolean indicating whether RandomResize / Scaling is applied
+        scale (List):           Ground Truth scale
     """
     
     for i in range(len(mask)):
@@ -41,12 +41,18 @@ def adjust_mask(self, mask: torch.Tensor, meta: List, scale=None):
         if 'flip' in meta[i] and meta[i]['flip']:
             axis = [1] if (meta[i]['flip_direction'] == 'horizontal') else [0]
             mask[i] = mask[i].flip(dims=axis)
-        
+
+        # Adjustment for "RandomCrop"
+        if 'crop_bbox' in meta[i]:
+            print(f"crop_box: {meta[i]['crop_bbox']}")
+            crop_y1, crop_y2, crop_x1, crop_x2 = meta[i]['crop_bbox']
+            mask = mask[crop_y1:crop_y2, crop_x1:crop_x2, ...]
+            
     # Adjustment for "Resize"
     if scale != None:
         mask = TF.resize(mask.unsqueeze(1), scale, IM.NEAREST).squeeze()
 
-    # FIXME: Add adjustment for "RandomCrop" transformation
+    # FIXME: Adjustment for "Pad"
 
     return mask
 

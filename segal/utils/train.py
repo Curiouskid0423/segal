@@ -19,8 +19,12 @@ from mmseg.models import BaseSegmentor
 from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
+
+# imports to register segal customized mmcv blocks
 from segal.runner import *
 from segal.hooks import *
+from segal.transforms import * 
+from segal.losses import *
 
 def is_nested_tuple(x):
     return isinstance(x, tuple) and all([isinstance(it, tuple) for it in x])

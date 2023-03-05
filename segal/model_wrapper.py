@@ -2,8 +2,6 @@
 ModelWrapper to contain an instance attribute of 
 type torch.nn.Module that MMSeg can work on. 
 """
-import sys
-from copy import deepcopy
 from collections.abc import Sequence
 from typing import Callable, Optional
 from functools import reduce
@@ -258,7 +256,7 @@ class ModelWrapper:
 
         if self.cfg.active_learning.heuristic == 'entropy' and hasattr(self.sample_settings, 'entropy_prop'):
             entropy_prop = float(self.sample_settings['entropy_prop'])
-            print("Using entropy sampling with proportion: ", entropy_prop)
+            self.logger.info("Using entropy sampling with proportion: ", entropy_prop)
             entropy_selection_pool = int(selection_pool * entropy_prop)
             random_selection_pool = selection_pool - entropy_selection_pool
             values, entropy_indices = uc_map.flatten().topk(k=entropy_selection_pool, dim=-1, largest=True)

@@ -46,7 +46,7 @@ class ActiveLearningDataset(OracleDataset):
         random_state=None,
         configs: dict = None,
         last_active_steps: int = -1,
-        ):
+    ):
         
         assert configs is not None, "configs cannot be None"
         cfg_data = configs.data

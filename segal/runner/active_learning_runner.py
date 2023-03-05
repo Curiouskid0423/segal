@@ -92,12 +92,13 @@ class ActiveLearningRunner(BaseRunner):
         self.query_dataset = query_dataset
         self.wrapper = ModelWrapper(self.model, cfg)
 
-        self.get_initial_labels(settings, dataset)
         if self.sample_mode != 'image':
-            self.mask_size = query_dataset.get_raw(0)['gt_semantic_seg'][0].data.numpy().squeeze().shape
+            self.mask_size = cfg.scale_size
             self.get_initial_labels(settings, query_dataset, dataset_type='query')
             # Train and Query dataset masks have to be consistent
             dataset.masks = deepcopy(query_dataset.masks)
+
+        self.get_initial_labels(settings, dataset)
     
         self.active_learning_loop = ActiveLearningLoop(
             dataset = dataset, 
@@ -126,7 +127,10 @@ class ActiveLearningRunner(BaseRunner):
             ground_truth = data_batch['gt_semantic_seg'].data[0]
             mask = utils.adjust_mask(
                 mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth[0].squeeze().size())
-            
+
+            # print(f"mask shape: {mask.shape} | flattened: {mask.flatten().shape}")
+            # print(f"ground_truth shape: {ground_truth.shape} | flattened: {ground_truth.flatten().shape}")
+
             assert hasattr(self, 'cfg_al')
             ground_truth.flatten()[~mask.flatten()] = self.cfg_al.settings.pixel.ignore_index
             data_batch['gt_semantic_seg'].data[0]._data = ground_truth
@@ -379,8 +383,9 @@ class ActiveLearningRunner(BaseRunner):
                 
                 # fall back to train_set when `mode` is not present, e.g. `query` during image-based sampling
                 ds = datasets['train'] if not (mode in datasets.keys()) else datasets[mode]
+                # compute dataset_size for current `mode` for logging purpose
+                dataset_size = len(ds) if not (self.sample_mode=='image' and mode=='query') else len(ds.pool)
 
-                dataset_size = len(ds) if self.sample_mode == 'image'  else len(ds.pool)
                 self.logger.info(f"sample round {sample_round} | {mode} | total epochs {epochs} | dataset size: {dataset_size}")
                 if isinstance(mode, str):  
                     if not hasattr(self, mode):
@@ -388,6 +393,8 @@ class ActiveLearningRunner(BaseRunner):
                     epoch_runner = getattr(self, mode)
                 else:
                     raise TypeError('mode in workflow must be a str, but got {}'.format(type(mode)))
+                
+                # `new_loader` is NOT used in `query` but only in [`train`, `val`]
                 new_loader = build_dataloader(
                     ds,
                     configs.data.samples_per_gpu,

@@ -64,6 +64,7 @@ class OracleDataset(torchdata.Dataset):
         Return list of selected indices for training
         at the current time step / active learning step.
         """
+        # when `last_active_steps = K`, we will only be getting indices after round K
         if self.last_active_steps == -1:
             threshold = 0
         else:
