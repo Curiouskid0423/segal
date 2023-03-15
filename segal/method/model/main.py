@@ -3,9 +3,8 @@ Full model file
 """
 from argparse import Namespace
 import math
-import torch
+import einops
 import torch.nn as nn
-from mmcv.cnn import build_norm_layer
 from mmcv.cnn.utils.weight_init import (constant_init, normal_init,
                                         trunc_normal_init)
 from mmcv.runner import BaseModule, ModuleList
@@ -42,19 +41,17 @@ class TwinMixVisionTransformer(BaseModule):
         assert not (init_cfg and pretrained), \
             'init_cfg and pretrained cannot be set at the same time'
 
-        # hyperparameters for the model
-        self.num_subimages = 256 # FIXME: should be set in config file
-        self.subimages_crop_size = (384, 384) # FIXME: should be set in config file
-
         # save configs
         self.cfg_seg = seg_projection
         self.cfg_mae = mae_projection
 
         # Transformer Block 1 is separate for the two branches
         self.seg_projection = build_projection(
-            self.cfg_seg, 'seg', norm_cfg, act_cfg, mlp_ratio, qkv_bias, drop_rate, attn_drop_rate, drop_path_rate, with_cp)
+            self.cfg_seg, 'seg', norm_cfg, act_cfg, mlp_ratio, qkv_bias, 
+            drop_rate, attn_drop_rate, drop_path_rate, with_cp)
         self.mae_projection = build_projection(
-            self.cfg_mae, 'mae', norm_cfg, act_cfg, mlp_ratio, qkv_bias, drop_rate, attn_drop_rate, drop_path_rate, with_cp)
+            self.cfg_mae, 'mae', norm_cfg, act_cfg, mlp_ratio, qkv_bias, 
+            drop_rate, attn_drop_rate, drop_path_rate, with_cp)
         
         # Main shared weight backbone
         assert self.cfg_seg.embed_dims * self.cfg_seg.num_heads \
@@ -75,6 +72,10 @@ class TwinMixVisionTransformer(BaseModule):
             **encoder
         )
 
+        # TODO: mask position embeddings. leaving out for now
+        # since SegFormer does not require position encoding
+        self.mae_enc_position_embedding = None
+        self.mae_dec_position_embedding = None
 
     def init_weights(self):
         """ Copied from MixVisionTransformer class """
@@ -93,7 +94,7 @@ class TwinMixVisionTransformer(BaseModule):
         else:
             super(TwinMixVisionTransformer, self).init_weights()
 
-    def projection(self, x, ptype='seg'):
+    def projection(self, x, ptype='seg', sr_enable=True):
         if ptype == 'seg':
             proj_head = self.seg_projection
         elif ptype == 'mae':
@@ -102,19 +103,21 @@ class TwinMixVisionTransformer(BaseModule):
             raise NotImplementedError("unknown ptype")
 
         patchify, encode, normalize = proj_head
-        x, hw_shape = patchify(x)
+        x, hw_shape = patchify(x) # (batch, num_patches, embed_dim) 
         for block in encode:
-            x = block(x, hw_shape)
+            x = block(x, hw_shape, sr_enable)
         x = normalize(x)
-        # convert embeddings into sparital tensor
-        x = nlc_to_nchw(x, hw_shape)
+        # convert embeddings into sparital tensor (l = c * h)
+        x = nlc_to_nchw(x, hw_shape) # (batch, num_patches*(patch_size**2), embed_dim)
         return x
 
     def forward(self, x, train_type='seg'):
-
         assert train_type in ['mae', 'seg']
+        if train_type == 'mae':
+            feat = self.projection(x, ptype='mae', sr_enable=False)
+        else:
+            feat = self.projection(x, ptype='seg')
 
-        feat = self.projection(x, ptype=train_type)
-        pred = self.encoder(feat)
+        pred = self.encoder(feat, ptype=train_type)
         all_features = [feat] + pred
         return all_features

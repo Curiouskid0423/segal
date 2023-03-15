@@ -3,7 +3,8 @@ import os.path as osp
 import platform
 import shutil
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
+import gc
 from torchvision.transforms import InterpolationMode as IM
 import torchvision.transforms.functional as TF
 import mmcv
@@ -39,7 +40,9 @@ class ActiveLearningRunner(BaseRunner):
         max_epochs=None, sample_mode=None, sample_rounds=None):
 
         if max_iters is not None:
-            raise NotImplementedError("setting `max_iters` manually is not supported in ActiveLearningRunner currently.")
+            raise NotImplementedError(
+                f"setting `max_iters` manually is not supported in ActiveLearningRunner currently. " 
+                + f"Got max_iters {max_iters}")
         assert max_epochs is not None, "`max_epochs` should not be None."
         self.sample_mode = sample_mode
         self.sample_rounds = sample_rounds
@@ -47,32 +50,6 @@ class ActiveLearningRunner(BaseRunner):
         
         super().__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
-
-
-    def get_max_iters(self, config: Namespace, dataset_size: int):
-        """
-        Given the config and dataset size (required in pixel-based), compute the 
-        total iterations based on the total number of epochs, considering both the 
-        case of sample regularly and irregularly.
-        """
-
-        num_devices, samples_per_gpu = len(config.gpu_ids), config.data.samples_per_gpu
-        effective_batch_size = samples_per_gpu * num_devices
-        if self.sample_mode == 'pixel':
-            iter_per_epoch = np.ceil(dataset_size / effective_batch_size).astype(int)
-            return self.max_epochs * iter_per_epoch
-        elif self.sample_mode == 'image':
-            init = self.sample_settings.initial_pool
-            query = self.sample_settings.budget_per_round
-            total_epochs = 0
-            flow = utils.process_workflow(config.workflow, self.sample_rounds)
-            # `iter_this_round` increases in image-based sampling over time
-            for r in range(self.sample_rounds):
-                iter_this_round = np.ceil((init + query * r) / effective_batch_size).astype(int)
-                for mode, epoch in flow[r]:
-                    if mode == 'train':
-                        total_epochs += epoch * iter_this_round
-            return total_epochs
 
     def init_active_variables(
         self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
@@ -110,7 +87,8 @@ class ActiveLearningRunner(BaseRunner):
             collate_fn = mmcv_collate_fn
         )
 
-        self._max_iters = self.get_max_iters(config=cfg, dataset_size=len(dataset))
+        self._max_iters = utils.get_max_iters(
+            cfg, self.max_epochs, self.sample_mode, dataset_size=len(dataset))
         self.logger.info(f"max iters: {self.max_iters} | max epochs: {self.max_epochs}")
 
     def run_iter(self, data_batch, train_mode, **kwargs):
@@ -124,16 +102,9 @@ class ActiveLearningRunner(BaseRunner):
             
         if train_mode and self.sample_mode == 'pixel':
             data_batch, mask = data_batch
-            ground_truth = data_batch['gt_semantic_seg'].data[0]
-            mask = utils.adjust_mask(
-                mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth[0].squeeze().size())
-
-            # print(f"mask shape: {mask.shape} | flattened: {mask.flatten().shape}")
-            # print(f"ground_truth shape: {ground_truth.shape} | flattened: {ground_truth.flatten().shape}")
-
-            assert hasattr(self, 'cfg_al')
-            ground_truth.flatten()[~mask.flatten()] = self.cfg_al.settings.pixel.ignore_index
-            data_batch['gt_semantic_seg'].data[0]._data = ground_truth
+            mask = mask.detach() # masks do not need gradients
+            ignore_index = self.cfg_al.settings.pixel.ignore_index
+            data_batch = utils.preprocess_data_and_mask(data_batch, mask, ignore_index)
 
         if self.batch_processor is not None:
             outputs = self.batch_processor(
@@ -153,25 +124,16 @@ class ActiveLearningRunner(BaseRunner):
 
     def train(self, data_loader, **kwargs):
 
-        def pixel_mask_check(data_batch, index=0):
-            true_count = np.count_nonzero(data_batch[1].numpy()) // self.data_loader.batch_size
-            self.logger.info(f"Mask[{index}] check: mask's True value count = {true_count}")
-            return True
-
         self.model.train()
-        # self.model = self.model.half() # FIXME: remove when CUDA memory is sufficient
         self.mode = 'train'
         self.data_loader = data_loader
+        batch_size = self.data_loader.batch_size
         self.call_hook('before_train_epoch')
         time.sleep(2)  # Prevent possible deadlock during epoch transition
 
-        mask_count_var = 0  # debug variable
-
         for i, data_batch in enumerate(self.data_loader):
-            # verify that all devices have the right number of masks (check every 100 batch)
-            # if (mask_count_var < 5 and i % 100 == 0) and self.sample_mode == 'pixel':
-            #     pixel_mask_check(data_batch, i)
-            #     mask_count_var += 1
+            utils.pixel_mask_check(
+                data_batch, batch_size, i, self.sample_mode, logger=self.logger)
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -212,7 +174,7 @@ class ActiveLearningRunner(BaseRunner):
             model = self.model
 
         # config contains `resume_from`
-        if hasattr(self.configs, 'load_from'):
+        if hasattr(self.configs, 'load_from') and self.configs.load_from != None:
             from mmcv.runner.checkpoint import load_checkpoint
             rank, _ = get_dist_info()
             if rank == 0:
@@ -276,7 +238,6 @@ class ActiveLearningRunner(BaseRunner):
             if dataset_type == 'train':
                 active_set.label_randomly(sample_settings['initial_pool'])
             else:
-                # FIXME: Label ALL images for query 
                 total_size = active_set.num_labelled + active_set.num_unlabelled
                 active_set.label_randomly(n=total_size)
             self.logger.info(
@@ -333,30 +294,33 @@ class ActiveLearningRunner(BaseRunner):
             **kwargs:           Miscellaneous arguments to pass down to epoch_runners
         """
 
+        # assertions for type check
+        assert isinstance(datasets, dict)
+        assert configs != None
+        assert mmcv.is_list_of(configs.workflow, tuple)
+
+        # useful local variables
         workflow = configs.workflow
         self.configs = configs
         self.cfg_al = configs.active_learning
         self.sample_settings = getattr(self.cfg_al.settings, self.sample_mode)
-
-        assert isinstance(datasets, dict)
-        assert configs != None
-        assert mmcv.is_list_of(workflow, tuple)
-
-        # Set up ActiveLearningDataset instance and label data in the specified strategy
+        work_dir = self.work_dir if self.work_dir is not None else 'NONE'
+       
+        # set up ActiveLearningDataset instance and label data in the specified strategy
         self.create_active_sets(datasets, configs)
         
-        work_dir = self.work_dir if self.work_dir is not None else 'NONE'
-        self.logger.info(
-            'start running, host: %s, work_dir: %s', get_host_info(), work_dir)
-        # Temporarily commented out since it's taking up space.
-        # self.logger.info('Hooks will be executed in the following order:\n%s', self.get_hook_info())
+        # log essential info 
+        self.logger.info('start running, host: %s, work_dir: %s', get_host_info(), work_dir)
+        self.logger.info('Hooks will be executed in the following order:\n%s', self.get_hook_info())
         self.logger.info('workflow: %s', workflow)
         self.call_hook('before_run')
 
-        # When user wants to sample regularly, duplicate the inner-workflow tuples
+        # when user wants to sample regularly, duplicate the inner-workflow tuples
         workflow = utils.process_workflow(workflow, self.sample_rounds)
 
+        # main loops of train-query-val
         for sample_round, flow_per_round in enumerate(workflow):
+
             self.logger.info(f"Active Learning sample round {sample_round+1}.")
             reset_toggle = hasattr(self.cfg_al, "reset_each_round") and self.cfg_al.reset_each_round
 
@@ -366,17 +330,11 @@ class ActiveLearningRunner(BaseRunner):
                 for m, e in flow_per_round:
                     if m == 'train':
                         self._max_epochs = e
-                        self._max_iters = self.get_max_iters(
-                            config=configs,
-                            dataset_size=len(datasets['train'])
-                        )
+                        self._max_iters = utils.get_max_iters(
+                            configs, e, self.sample_mode, dataset_size=len(datasets['train']))
                 self.logger.info("Re-initialized learning rate (lr) after sampling.")
 
-            # check that the flow_per_round is valid, ie. has no repeated arguments
-            wf = [m for m, _ in flow_per_round]
-            assert len(wf) == 1 and wf[0] == 'train' \
-                or (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
-                or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
+            assert utils.check_workflow_validity(flow_per_round)
 
             for i, flow in enumerate(flow_per_round):
                 mode, epochs = flow
@@ -395,16 +353,15 @@ class ActiveLearningRunner(BaseRunner):
                     raise TypeError('mode in workflow must be a str, but got {}'.format(type(mode)))
                 
                 # `new_loader` is NOT used in `query` but only in [`train`, `val`]
+                samples_gpu, workers_gpu =  configs.data.samples_per_gpu, configs.data.workers_per_gpu
+                num_gpu = len(configs.gpu_ids)
                 new_loader = build_dataloader(
-                    ds,
-                    configs.data.samples_per_gpu,
-                    configs.data.workers_per_gpu,
-                    num_gpus = len(configs.gpu_ids),
+                    ds, samples_gpu, workers_gpu, num_gpu,
                     dist = True if len(configs.gpu_ids) > 1 else False,
-                    seed = configs.seed,
-                    drop_last = True,
-                    pin_memory=False
+                    seed = configs.seed, drop_last = True, 
+                    # pin_memory = False
                 ) 
+
                 for _ in range(epochs):
                     epoch_runner(new_loader, **kwargs)
                 

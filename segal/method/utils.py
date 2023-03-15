@@ -1,19 +1,10 @@
+import numpy as np
 import torch
 from argparse import Namespace
 from mmcv.cnn import build_norm_layer
 from mmcv.runner import ModuleList
-from mmseg.models.utils import PatchEmbed, nlc_to_nchw
+from mmseg.models.utils import PatchEmbed
 from segal.method.mit_modules import TransformerEncoderLayer
-
-def index_sequence(x: torch.Tensor, ids):
-    """Index tensor (x) with indices given by ids
-    Args:
-        x: input sequence tensor, can be 2D (batch x length) or 3D (batch x length x feature)
-        ids: 2D indices (batch x length) for re-indexing the sequence tensor
-    """
-    if len(x.shape) == 3:
-        ids = ids.unsqueeze(-1).expand(-1, -1, x.shape[-1])
-    return torch.take_along_dim(x, ids, dim=1)
 
 def build_embedding(
     cfg: Namespace, mode: str = 'overlap', 
@@ -23,7 +14,7 @@ def build_embedding(
     """
 
     embed_dims = cfg.embed_dims * cfg.num_heads
-    if mode == 'non_overlap':
+    if mode == 'non_overlap': # mae branch
         assert not hasattr(cfg, 'stride'), \
             "`stride` argument is not allowed in non_overlap embedding mode."
         return PatchEmbed(
@@ -31,10 +22,10 @@ def build_embedding(
             embed_dims=embed_dims,
             kernel_size=cfg.patch_size,
             stride=cfg.patch_size,
-            padding=cfg.patch_size // 2, 
+            padding=0, 
             norm_cfg=norm_cfg
         )
-    elif mode == 'overlap':
+    elif mode == 'overlap': # segmentation branch
         return PatchEmbed(
             in_channels=cfg.in_channels,
             embed_dims=embed_dims,
@@ -83,7 +74,7 @@ def build_projection(
             act_cfg=act_cfg,
             norm_cfg=norm_cfg,
             with_cp=with_cp,
-            sr_ratio=cfg.sr_ratios[idx]
+            sr_ratio=cfg.sr_ratios
          )
          for idx in range(cfg.num_layers)]
     )
@@ -92,39 +83,28 @@ def build_projection(
     projection_block = ModuleList([patch_embed, encode, norm])
     return projection_block
 
-def random_masking(x, keep_length, ids_shuffle):
-    """Apply random masking on input tensor
-    Args:
-        x: input patches (batch x length x feature)
-        keep_length: length of unmasked patches
-        ids_shuffle: random indices for shuffling the input sequence 
-    Returns:
-        kept: unmasked part of x
-        mask: a 2D (batch x length) mask tensor of 0s and 1s indicated which
-            part of x is masked out. The value 0 indicates not masked and 1
-            indicates masked.
-        ids_restore: indices to restore x. If we take the kept part and masked
-            part of x, concatentate them together and index it with ids_restore,
-            we should get x back.
-    """
-    batch, length, feature_size = x.size()
-    shuffled = index_sequence(x, ids_shuffle)
-    kept = shuffled[:, :keep_length, :]
-    ids_restore = torch.empty_like(ids_shuffle)
-    for idx, row in enumerate(ids_shuffle):
-        ids_restore[idx] = torch.argsort(row)
-    mask = torch.empty(batch, length)
-    for i in range(batch):
-        mask[i] = torch.where(ids_restore[i] >= keep_length, 1., 0.)
-    return kept.cuda(), mask.cuda(), ids_restore
+def get_crop_bbox(img, crop_size):
+    """Randomly get a crop bounding box."""
+    channels, height, width = img.shape
+    margin_h = max(height - crop_size[0], 0)
+    margin_w = max(width - crop_size[1], 0)
+    offset_h = np.random.randint(0, margin_h + 1)
+    offset_w = np.random.randint(0, margin_w + 1)
+    crop_y1, crop_y2 = offset_h, offset_h + crop_size[0]
+    crop_x1, crop_x2 = offset_w, offset_w + crop_size[1]
 
-def restore_masked(kept_x, masked_x, ids_restore):
-    """Restore masked patches
-    Args:
-        kept_x: unmasked patches
-        masked_x: masked patches
-        ids_restore: indices to restore x
-    Returns:
-        restored patches
-    """
-    return index_sequence(torch.cat((kept_x, masked_x), dim=1), ids_restore)
+    return crop_y1, crop_y2, crop_x1, crop_x2
+
+def get_random_crops(image, crop_size, num=4):
+
+    def crop(img, crop_bbox):
+        """Crop from ``img``"""
+        crop_y1, crop_y2, crop_x1, crop_x2 = crop_bbox
+        img = img[..., crop_y1:crop_y2, crop_x1:crop_x2]
+        return img
+
+    results = []
+    for i in range(num):
+        crop_bbox = get_crop_bbox(image, crop_size=crop_size)
+        results.append(crop(image, crop_bbox))
+    return results

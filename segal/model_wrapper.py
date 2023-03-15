@@ -3,83 +3,20 @@ ModelWrapper to contain an instance attribute of
 type torch.nn.Module that MMSeg can work on. 
 """
 from collections.abc import Sequence
-from typing import Callable, Optional
 from functools import reduce
 
 import numpy as np
 import pickle
 import torch
-import torch.distributed as dist
 from torch.utils.data import Dataset
 import mmcv
-from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
 from mmseg.utils import get_root_logger
 from mmseg.datasets import build_dataloader
+from mmseg.models import EncoderDecoder
 from segal.active.dataset.active_dataset import ActiveLearningDataset
 from segal.active.heuristics import AbstractHeuristic
-# from torch.utils.data.dataloader import default_collate
-# from mmcv.engine import collect_results_cpu
-
-
-def map_on_tensor(fn, val):
-    """Map a function on a Tensor or a list of Tensors"""
-    if isinstance(val, Sequence):
-        return [fn(v) for v in val]
-    elif isinstance(val, dict):
-        return {k: fn(v) for k, v in val.items()}
-    return fn(val)
-
-
-def collect_results_gpu(result_part, size):
-    """Collect results under gpu mode.
-
-    On gpu mode, this function will encode results to gpu tensors and use gpu
-    communication for results collection.
-
-    Args:
-        result_part (list): Result list containing result parts
-            to be collected.
-        size (int): Size of the results, commonly equal to length of
-            the results.
-
-    Returns:
-        list: The collected results.
-    """
-    rank, world_size = get_dist_info()
-    # dump result part to tensor with pickle
-    part_tensor = torch.tensor(
-        bytearray(pickle.dumps(result_part)), dtype=torch.uint8, device='cuda')
-    # gather all result part tensor shape
-    shape_tensor = torch.tensor(part_tensor.shape, device='cuda')
-    shape_list = [shape_tensor.clone() for _ in range(world_size)]
-    dist.all_gather(shape_list, shape_tensor)
-    # padding result part tensor to max length
-    shape_max = torch.tensor(shape_list).max()
-    part_send = torch.zeros(shape_max, dtype=torch.uint8, device='cuda')
-    part_send[:shape_tensor[0]] = part_tensor
-    part_recv_list = [
-        part_tensor.new_zeros(shape_max) for _ in range(world_size)
-    ]
-    # gather all result part
-    dist.all_gather(part_recv_list, part_send)
-
-    if rank == 0:
-        part_list = []
-        for recv, shape in zip(part_recv_list, shape_list):
-            part_result = pickle.loads(recv[:shape[0]].cpu().numpy().tobytes())
-            # When data is severely insufficient, an empty part_result
-            # on a certain gpu could makes the overall outputs empty.
-            if part_result is not None:
-                part_list.append(part_result)
-        # sort the results
-        ordered_results = []
-        for res in zip(*part_list):
-            ordered_results.extend(list(res))
-        # the dataloader may pad some samples
-        ordered_results = ordered_results[:size]
-        return ordered_results
-
+from segal.utils.sampling import collect_results_gpu, batch_preprocess
 
 class ModelWrapper:
     """
@@ -94,52 +31,26 @@ class ModelWrapper:
         self.backbone = model
         self.logger = get_root_logger()
         self.cfg = cfgs
+        assert cfgs.model.test_cfg.mode == 'whole', \
+            "ModelWrapper does not support `slide` query inference"
         self.sample_mode = cfgs.runner.sample_mode
         self.sample_settings = getattr(cfgs.active_learning.settings, self.sample_mode)
         self.gpu_ids = cfgs.gpu_ids
         self.seed = cfgs.seed
 
-    def predict_on_dataset_generator(
-        self, dataset, batch_size, iterations, use_cuda, workers=4,
-        collate_fn: Optional[Callable] = None,
-        half=False, verbose=True,
-    ):
-        """
-        Use the model to predict on a dataset `iterations` time.
-
-        Args:
-            dataset:    Dataset to predict on.
-            batch_size: Batch size to use during prediction.
-            iterations: Number of iterations per sample.
-            use_cuda:   Use CUDA or not.
-            workers:    Number of workers to use.
-            collate_fn: The collate function to use.
-            half:       If True use half precision.
-            verbose:    If True use tqdm to display progress
-
-        Notes:
-            The "batch" is made of `batch_size` * `iterations` samples.
-
-        Returns:
-            Generators [batch_size, n_classes, ..., n_iterations].
-        """
-        self.eval()
-        raise NotImplementedError
-
-    def batch_preprocess(self, data_batch):
-        """ Preprocess data batch for type compatibility """
-
-        if isinstance(data_batch['img'], DataContainer):
-            ext_img = data_batch['img'].data[0].cuda()
-        else:
-            ext_img = data_batch['img'][0].data[0].cuda()
-
-        if isinstance(data_batch['img_metas'], DataContainer):
-            ext_img_meta = data_batch['img_metas'].data[0]
-        else:
-            ext_img_meta = data_batch['img_metas'][0]
-
-        return ext_img, ext_img_meta
+    def set_sample_evenly(self):
+        # temp: region-sampling is currently only supported for sample_evenly=True
+        
+        if self.sample_mode == 'region':
+            assert hasattr(self.sample_settings, 'sample_evenly') and self.sample_settings.sample_evenly
+            sample_evenly = True
+        elif self.sample_mode == 'pixel':
+            if hasattr(self.sample_settings, 'sample_evenly'):
+                sample_evenly = self.sample_settings.sample_evenly
+            else:
+                sample_evenly = False
+            
+        return sample_evenly
 
     def predict_on_dataset(
             self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
@@ -152,10 +63,13 @@ class ModelWrapper:
             returns a h*w boolean map per image, representing new pixels to be labelled.
         """
         self.eval()
-        model = self.backbone
-        if self.sample_mode == 'pixel':
-            assert isinstance(dataset, ActiveLearningDataset)
+        model: EncoderDecoder = self.backbone.module
         self.query_dataset_size = len(dataset)
+        
+        assert self.sample_mode == 'image' or isinstance(dataset, ActiveLearningDataset)
+
+        sample_evenly = self.set_sample_evenly()
+        
         test_loader = build_dataloader(
             dataset,
             samples_per_gpu=1,
@@ -168,16 +82,9 @@ class ModelWrapper:
         )
 
         results = []
-
         rank, world_size = get_dist_info()
         if rank == 0:
             prog_bar = mmcv.ProgressBar(len(dataset))
-
-        if self.sample_mode == 'pixel':
-            if hasattr(self.sample_settings, 'sample_evenly'):
-                sample_evenly = self.sample_settings.sample_evenly
-            else:
-                sample_evenly = False
 
         for idx, data_batch in enumerate(test_loader):
 
@@ -185,10 +92,10 @@ class ModelWrapper:
                 data_batch, mask = data_batch
 
             with torch.no_grad():
-                ext_img, ext_img_meta = self.batch_preprocess(data_batch)
-                outputs = model.module.encode_decode(ext_img, ext_img_meta)
+                ext_img, ext_img_meta = batch_preprocess(data_batch)
+                logits = model.whole_inference(ext_img, ext_img_meta, rescale=False)
                 scores = heuristic.get_uncertainties(
-                    outputs, 
+                    logits, 
                     mask = None if self.sample_mode == 'image' else mask
                 )
                 
@@ -208,7 +115,7 @@ class ModelWrapper:
 
             # Rank 0 worker will collect progress from all workers.
             if rank == 0:
-                completed = outputs.size()[0] * world_size
+                completed = logits.size()[0] * world_size
                 for _ in range(completed):
                     prog_bar.update()
 
@@ -226,34 +133,12 @@ class ModelWrapper:
 
         # For workers that are not rank 0
         if self.sample_mode == 'pixel':
-            ds = dataset[0][0]['gt_semantic_seg'][0].data.squeeze().size()
+            ds = self.cfg.scale_size
             return np.zeros(shape=(len(dataset), ds[0], ds[1]))
         else:
             return np.zeros(len(dataset))
 
-    def get_pixels_by_budget(self, budget: int, uc_map: torch.Tensor, sample_evenly: bool):
-        """
-        The method is for pixel-based sampling (not image-based).
-
-        Given uncertainty map or a list of uncertainty maps, budget, and sample_evenly,
-        return the top K pixels to label according to the budget and `sample_threshold`
-        Returns (value, index) using torch.Tensor.topk API.
-        """
-
-        top_k_percent = None
-        unit = reduce(lambda x, y: x*y, uc_map.shape)
-
-        if hasattr(self.sample_settings, 'sample_threshold'):
-            top_k_percent = self.sample_settings['sample_threshold']
-            assert top_k_percent > 0., \
-                f"Can only sample with sample_threshold > 0, but received sample_threshold {top_k_percent}"
-            selection_pool = int(top_k_percent / 100 * unit)
-        else:
-            if sample_evenly:
-                selection_pool = budget // self.query_dataset_size
-            else:
-                selection_pool = budget
-
+    def get_indices(self, selection_pool, uc_map):
         if self.cfg.active_learning.heuristic == 'entropy' and hasattr(self.sample_settings, 'entropy_prop'):
             entropy_prop = float(self.sample_settings['entropy_prop'])
             self.logger.info("Using entropy sampling with proportion: ", entropy_prop)
@@ -267,6 +152,49 @@ class ModelWrapper:
         else:
             values, indices = uc_map.flatten().topk(k=selection_pool, dim=-1, largest=True)
             indices = indices.cpu().numpy()
+            
+        return indices
+
+    def get_regions(self, selection_pool, uc_map, side=3):
+        """
+        A function for region-based sampling. Given `selection_pool` and `uc_map`, 
+        return the indices of selected REGULAR-regions of size `side*side`. Need 
+        to address all 4 cases of `sample_threshold` and `sample_evenly=[True, False]`
+        """
+        # scores = self.region_scorer() # keep grad 
+        pass
+
+    def get_pixels_by_budget(
+        self, budget: int, uc_map: torch.Tensor, sample_evenly: bool, unit='pixel'):
+        """
+        The method is for pixel-based sampling (not image-based).
+
+        Given uncertainty map or a list of uncertainty maps, budget, and sample_evenly,
+        return the top K pixels to label according to the budget and `sample_threshold`
+        Returns (value, index) using torch.Tensor.topk API.
+        """
+
+        top_k_percent = None
+        unit = reduce(lambda x, y: x*y, uc_map.shape)
+
+        # define `selection_pool` -- number of pixels that the budget allows to select. in the case where
+        # sample_threshold is set, selection_pool will be equal to the `top_k_percent` instead of the budget
+        if hasattr(self.sample_settings, 'sample_threshold'):
+            top_k_percent = self.sample_settings['sample_threshold']
+            assert top_k_percent > 0., \
+                f"Can only sample with sample_threshold > 0, but received sample_threshold {top_k_percent}"
+            selection_pool = int(top_k_percent / 100 * unit)
+        else:
+            if sample_evenly:
+                selection_pool = budget // self.query_dataset_size
+            else:
+                selection_pool = budget
+
+        # define indices
+        if unit == 'region':
+            indices = self.get_regions(selection_pool, uc_map)
+        else:
+            indices = self.get_indices(selection_pool, uc_map)
 
         if top_k_percent != None:  # sample_threshold=True
             if sample_evenly:
@@ -304,7 +232,8 @@ class ModelWrapper:
         if sample_unit == 'pixel':
             indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
         elif sample_unit == 'region':
-            indices = self.get_regions_by_budget(budget, uc_map_cuda, sample_evenly)
+            indices = self.get_pixels_by_budget(
+                budget, uc_map_cuda, sample_evenly, unit='region')
         else:
             raise NotImplementedError("Not recognized sampling unit.")
         new_query = np.zeros(uc_map.shape, dtype=bool)

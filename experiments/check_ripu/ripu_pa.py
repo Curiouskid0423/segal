@@ -78,7 +78,8 @@ optimizer = dict(type='SGD', lr=0.0009, momentum=0.9, weight_decay=0.0005)
 # optimizer_config = dict()
 # FP16
 optimizer_config = dict(type='Fp16OptimizerHook', loss_scale=512.)
-fp16 = dict()
+# mixed precision
+fp16 = dict(loss_scale='dynamic')
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=False)
 
 log_config = dict(

@@ -149,10 +149,10 @@ class EfficientMultiheadAttention(MultiheadAttention):
                           'future. Please upgrade your mmcv.')
             self.forward = self.legacy_forward
 
-    def forward(self, x, hw_shape, identity=None):
+    def forward(self, x, hw_shape, sr_enable, identity=None):
 
         x_q = x
-        if self.sr_ratio > 1:
+        if sr_enable and self.sr_ratio > 1:
             x_kv = nlc_to_nchw(x, hw_shape)
             x_kv = self.sr(x_kv)
             x_kv = nchw_to_nlc(x_kv)
@@ -174,7 +174,6 @@ class EfficientMultiheadAttention(MultiheadAttention):
             x_kv = x_kv.transpose(0, 1)
 
         out = self.attn(query=x_q, key=x_kv, value=x_kv)[0]
-
         if self.batch_first:
             out = out.transpose(0, 1)
 
@@ -276,15 +275,16 @@ class TransformerEncoderLayer(BaseModule):
 
         self.with_cp = with_cp
 
-    def forward(self, x, hw_shape):
+    def forward(self, x, hw_shape, sr_enable):
 
-        def _inner_forward(x):
-            x = self.attn(self.norm1(x), hw_shape, identity=x)
+        def _inner_forward(x, sr_enable):
+            x = self.attn(
+                self.norm1(x), hw_shape, identity=x, sr_enable=sr_enable)
             x = self.ffn(self.norm2(x), hw_shape, identity=x)
             return x
 
         if self.with_cp and x.requires_grad:
-            x = cp.checkpoint(_inner_forward, x)
+            x = cp.checkpoint(_inner_forward, x, sr_enable)
         else:
-            x = _inner_forward(x)
+            x = _inner_forward(x, sr_enable)
         return x

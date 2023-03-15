@@ -1,6 +1,7 @@
 norm_cfg = dict(type='SyncBN', requires_grad=True)
 
 # check out details of EncoderDecoder at mmseg Github /mmseg/models/segmentors/encoder_decoder.py
+PATCH_SIZE_LIST = [3, 3, 3]
 model = dict(
     type='MultiTaskSegmentor',
     pretrained=None,
@@ -11,18 +12,19 @@ model = dict(
             num_heads=1, patch_size=7, stride=4, sr_ratios=8,
         ),
         mae_projection=dict(
-            in_channels=3, embed_dims=32, num_layers=4,
-            num_heads=1, patch_size=4, sr_ratios=1,
-            mask_ratio=0.6, rec_crop_size=(120, 120)
+            in_channels=3, embed_dims=32, num_layers=2,
+            num_heads=1, patch_size=3, sr_ratios=2,
+            mask_ratio=0.2, rec_crop_size=(144, 144)
         ),
         encoder=dict(
             embed_dims=32,
             num_stages=3,
             num_layers=[2, 2, 2],
             num_heads=[2, 5, 8],
-            patch_sizes=[3, 3, 3],  # fix patch_size at each layer. downsample by sr_ratio.
-            strides=[2, 2, 2],      # only used in SEG stage for PatchEmbedding.
-            sr_ratios=[2, 2, 1],    # spatial_reduction used in Attention. ignored in MAE stage.
+            patch_sizes=PATCH_SIZE_LIST,
+            strides=PATCH_SIZE_LIST,
+            padding=0,
+            sr_ratios=[2, 2, 1], 
             out_indices=(0, 1, 2),
         ),
         mlp_ratio=4,

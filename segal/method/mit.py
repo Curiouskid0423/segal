@@ -63,6 +63,7 @@ class MixVisionTransformer(BaseModule):
                  mlp_ratio=4,
                  qkv_bias=True,
                  drop_rate=0.,
+                 padding=None,
                  attn_drop_rate=0.,
                  drop_path_rate=0.,
                  act_cfg=dict(type='GELU'),
@@ -103,21 +104,37 @@ class MixVisionTransformer(BaseModule):
             for x in torch.linspace(0, drop_path_rate, sum(num_layers))
         ]  # stochastic num_layer decay rule
 
-
         # define `self.layers`
         # 1 stage of Transformer Block:
         # patch_embedding --> (attn -> mix-ffn -> norm) * num_layer --> .....
-        cur = 0
+        cur = 0        
         self.layers = ModuleList()
+        self.mae_patch_projection = ModuleList()
+        mask_into_encoder = False
+        
         for i, num_layer in enumerate(num_layers):
+            
             embed_dims_i = embed_dims * num_heads[i]
+            seg_padding = patch_sizes[i]//2 if (padding is None) else padding,
+            
+            # segmentation branch patch embeddings
             patch_embed = PatchEmbed(
                 in_channels=in_channels,
                 embed_dims=embed_dims_i,
                 kernel_size=patch_sizes[i],
                 stride=strides[i],
-                padding=patch_sizes[i] // 2,
-                norm_cfg=norm_cfg)
+                padding=seg_padding,
+                norm_cfg=norm_cfg
+            )
+            # mae branch patch embeddings
+            if not mask_into_encoder:
+                self.mae_patch_projection.append(
+                    PatchEmbed(
+                        in_channels=in_channels, embed_dims=embed_dims_i,
+                        kernel_size=1, stride=1, padding=0, norm_cfg=norm_cfg
+                    )
+                )
+            # transformer (efficient self-attn >> mix-ffn)
             layer = ModuleList([
                 TransformerEncoderLayer(
                     embed_dims=embed_dims_i,
@@ -155,15 +172,21 @@ class MixVisionTransformer(BaseModule):
         else:
             super(MixVisionTransformer, self).init_weights()
 
-    def forward(self, x):
+    def forward(self, x, ptype='seg'):
         # a list of features output at each Transformer Block
         outs = [] 
-
         for i, layer in enumerate(self.layers):
-            x, hw_shape = layer[0](x)
-            for block in layer[1]:
-                x = block(x, hw_shape)
-            x = layer[2](x)
+            if ptype == 'mae':
+                # patchify
+                x, hw_shape = self.mae_patch_projection[i](x)
+                for block in layer[1]:
+                    x = block(x, hw_shape, sr_enable=False)
+                    # x = block(x, hw_shape)
+            else:
+                x, hw_shape = layer[0](x) # patchify
+                for block in layer[1]:
+                    x = block(x, hw_shape, sr_enable=True)
+                x = layer[2](x)
             # convert embeddings to spatial tensor
             x = nlc_to_nchw(x, hw_shape)
             # keep features of this level to later feed into the decoder

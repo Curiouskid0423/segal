@@ -1,30 +1,41 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from argparse import Namespace
+import einops
 
 from mmseg.core import add_prefix
-from mmseg.ops import resize
-from mmseg.models import builder
 from mmseg.models.builder import SEGMENTORS
+from mmseg.utils import get_root_logger
 from mmseg.models.segmentors import EncoderDecoder
+from segal.method.utils import get_random_crops
+from segal.utils.masking import (patchify, random_masking, get_shuffled_ids, 
+                                restore_masked, unpatchify)
 
 
 @SEGMENTORS.register_module()
-class MultitaskSegmentor(EncoderDecoder):
+class MultiTaskSegmentor(EncoderDecoder):
+
     """
     A special segmentor structure such that we can train in alternation.
-    Currently expects backbone to be `TwinMixVisionTransformer` and 
-    decode
+    Currently expects backbone to be `TwinMixVisionTransformer` with 
+    decode_head `SegformerHead` and auxiliary_head `MaskDecodeHead`. 
+    SEGMENTORS class takes care of 
+    (1) `forward()` logic in ALL 
+        - train_step()
+        - val_step() 
+        - inference()
+    (2) loss computation
 
-    
+    The training in alternation logic should be taken care of in the
+    MultitaskActiveRunner class. 
+
     """
 
     def __init__(self,
         backbone,
         decode_head,
         auxiliary_head,
-        rec_crop_size,
         heuristics='entropy',
         neck=None,
         train_cfg=None,
@@ -33,52 +44,74 @@ class MultitaskSegmentor(EncoderDecoder):
         init_cfg=None):
 
         assert neck is None, \
-            "`neck` argument is not reliably supported by MultitaskSegmentor currently."
+            "`neck` argument is not reliably supported by MultiTaskSegmentor currently."
 
-        # backbone:        TwinMixVisionTransformer
-        # decode_head:     SegformerHead (segmentation)
-        # auxiliary_head:  SegformerHead (mae)
-        self.rec_crop_size = rec_crop_size
+
+        self.logger = get_root_logger()
+        # save config variables
+        self.mae_configs = Namespace(**backbone['mae_projection'])
+        self.seg_configs = Namespace(**backbone['seg_projection'])
+
+        # mae required variables 
+        self.rec_crop_size = self.mae_configs.rec_crop_size
         self.heuristics = heuristics
-        super(MultitaskSegmentor, self).__init__(
-            backbone, decode_head, auxiliary_head, 
-            train_cfg, test_cfg, pretrained, init_cfg=init_cfg)
-        
-            
-    # def sample_subimages(self, x, stage: str = 'warmup', num_sample: int = 2):
-    #     """ 
-    #     Given an image x, sample `num_sample` sub-images. If sample stage 
-    #     is 'warmup', simply sample randomly. If the sample stage is 'train', 
-    #     sample by self.heuristics.
-    #     """
-    #     assert stage in ['warmup', 'train']
-    #     assert hasattr(self, "heuristics")
 
-    def extract_feat(self, img, train_type: str):
+        super(MultiTaskSegmentor, self).__init__(
+            backbone=backbone,
+            decode_head=decode_head,
+            neck=None,
+            auxiliary_head=auxiliary_head,
+            train_cfg=train_cfg,
+            test_cfg=test_cfg,
+            pretrained=pretrained,
+            init_cfg=init_cfg)
+
+        # set num_patches in backbone
+        self.mask_ratio = self.mae_configs.mask_ratio
+        decoder_embedding_dim = 1 # FIXME: remove me
+        self.mask_tokens = nn.Parameter(torch.randn(1, 1, decoder_embedding_dim) * 0.02)
+        
+        mae_patch = self.mae_configs.patch_size
+        assert self.rec_crop_size[0] % mae_patch == 0 
+
+        self.num_patches = self.rec_crop_size[0] // mae_patch
+        self.masked_length = int(self.num_patches * self.num_patches * self.mask_ratio)
+        self.keep_length = self.num_patches*self.num_patches - self.masked_length
+
+    def sample_subimages(self, x, stage: str = 'warmup', num_sample: int = 2):
         """ 
-        Extract features from images using the 
-        right backbone according to train_type. 
+        Given an image x, sample `num_sample` sub-images. If sample stage 
+        is 'warmup', simply sample randomly. If the sample stage is 'train', 
+        sample by self.heuristics.
+        """
+        assert stage in ['warmup', 'train']
+        if stage == 'warmup':
+            # sample by random
+            result = []
+            for image in x:
+                # image -> (3, 264, 528)
+                list_of_crops = get_random_crops(
+                    image=image, crop_size=self.rec_crop_size, num=num_sample)
+                result.extend(list_of_crops) # [2*4, (256, 256)]
+        else:
+            # sample by heuristics
+            raise NotImplementedError('mask-by-heuristics is not implemented yet')
+        
+        return torch.stack(result, dim=0) 
+        
+    def extract_feat(self, img, train_type:str='seg'):
+        """ 
+        Extract features from images using `TwinMixVisionTransformer`,
+        which takes care of different types of projections based on train_type 
         """
         x = self.backbone(img, train_type)
         return x
-
-    # def _decode_head_forward_train(self, x, img_metas, gt_semantic_seg):
-    #     """Run forward function and calculate loss for decode head in
-    #     training."""
-    #     losses = dict()
-    #     loss_decode = self.decode_head.forward_train(x, img_metas,
-    #                                                  gt_semantic_seg,
-    #                                                  self.train_cfg)
-
-    #     losses.update(add_prefix(loss_decode, 'decode'))
-    #     return losses
 
     def forward_train(self, img, img_metas, gt_semantic_seg, stage='seg'):
         """Overrides EncoderDecoder. Forward function for training.
 
         when `train_type` is 'mae', return reconstructed image
         when `train_type` is 'seg' return the predicted segmentation map
-        at inference, the train_type will be 'seg'
         
         Args:
             img (Tensor): Input images.
@@ -96,18 +129,86 @@ class MultitaskSegmentor(EncoderDecoder):
 
         assert stage in ['mae', 'seg']
         
-        x = self.extract_feat(img, train_type=stage)
-
         losses = dict()
+        truncate_mask_at_encode = True # a boolean value to decide whether the encoder takes in masks
 
-        loss_decode = self._decode_head_forward_train(x, img_metas,
-                                                      gt_semantic_seg)
+        if stage == 'mae':
+            subimages = self.sample_subimages(img, num_sample=8) # 16 # (B, C, H, W)
+            batch_size = len(subimages)
+            ids_shuffle = get_shuffled_ids(
+                batch_size=batch_size, 
+                total_patches=self.num_patches*self.num_patches
+            ) # (B, H*W)
+            
+            # patchify: (8, 3, 256, 256) -> (8, 3, num_patches, patch_size*patch_size)
+            mae_patch_size = self.mae_configs.patch_size
+            batch_of_patches = patchify(subimages, mae_patch_size)
+            # fix to append channels into the feature length
+            visible_patches, mask, ids_restore = \
+                random_masking(batch_of_patches, self.keep_length, ids_shuffle) # (b c l f)
+            if truncate_mask_at_encode:
+                # assumes that the model does not have any overlapping patchify module
+                masked_images = einops.rearrange(
+                    visible_patches, 'b c l (ph pw) -> b c (l ph) pw', ph=mae_patch_size, pw=mae_patch_size)
+            else:
+                b, c, _, f = visible_patches.shape
+                visible_patches = einops.rearrange(visible_patches, 'b c l f -> b l (c f)')
+                masked_images = restore_masked(
+                    visible_patches, 
+                    masked_x=self.mask_tokens.expand(b, self.masked_length, c*f),
+                    ids_restore=ids_restore
+                )
+
+                masked_images = einops.rearrange(
+                    masked_images, 'b l (c f) -> b c l f', 
+                    c=self.mae_configs.in_channels, f=mae_patch_size**2)
+                masked_images = unpatchify(masked_images, patch_size=mae_patch_size)
+
+            mae_encoding = self.extract_feat(masked_images, train_type='mae') 
+
+            # append the mask tokens back, predict pixel-level reconstruction
+            mask = einops.rearrange(mask, 'b (h w) -> b h w', h=self.num_patches, w=self.num_patches)
+
+            if truncate_mask_at_encode:
+                loss_decode = self._mae_decoder_forward_train(
+                    encoding=mae_encoding, 
+                    mask_tokens=self.mask_tokens.expand(-1, self.masked_length, -1),
+                    mask=mask, 
+                    img_metas=img_metas,
+                    ids_restore=ids_restore, 
+                    ori_images=subimages.detach()
+                )
+            else:
+                loss_decode = self._mae_decoder_forward_train(
+                    encoding=mae_encoding, mask=mask, img_metas=img_metas,
+                    ids_restore=ids_restore, ori_images=subimages.detach()
+                )
+
+        else:
+            feat = self.extract_feat(img, train_type='seg')
+            loss_decode = self._decode_head_forward_train(
+                feat, img_metas, gt_semantic_seg)
+
         losses.update(loss_decode)
-
+        
         return losses
 
+    def _mae_decoder_forward_train(
+        self, encoding, mask, img_metas, ids_restore, ori_images, mask_tokens=None):
 
-    def train_step(self, data_batch, optimizer, **kwargs):
+        losses = dict()
+        loss_decode = self.auxiliary_head.forward_train(
+            inputs=(encoding) if mask_tokens is None else (encoding, mask_tokens),
+            mask=mask,
+            img_metas=img_metas,
+            ids_restore=ids_restore,
+            ori_images=ori_images,
+            train_cfg=self.train_cfg
+        )
+        losses.update(add_prefix(loss_decode, 'decode'))
+        return losses
+
+    def train_step(self, data_batch, stage, optimizer, **kwargs):
         """Override BaseSegmentor.
 
         Args:
@@ -127,7 +228,8 @@ class MultitaskSegmentor(EncoderDecoder):
                 DDP, it means the batch size on each GPU), which is used for
                 averaging the logs.
         """
-        losses = self(**data_batch) # calls `forward_train`
+        # calls `forward_train`. by default, return_loss=True.
+        losses = self(stage=stage, **data_batch) 
         loss, log_vars = self._parse_losses(losses)
 
         outputs = dict(
@@ -136,42 +238,3 @@ class MultitaskSegmentor(EncoderDecoder):
             num_samples=len(data_batch['img_metas']))
 
         return outputs
-
-        
-    def inference(self, img, img_meta, rescale):
-        """Inference with slide/whole style.
-
-        Args:
-            img (Tensor): The input image of shape (N, 3, H, W).
-            img_meta (dict): Image info dict where each dict has: 'img_shape',
-                'scale_factor', 'flip', and may also contain
-                'filename', 'ori_shape', 'pad_shape', and 'img_norm_cfg'.
-                For details on the values of these keys see
-                `mmseg/datasets/pipelines/formatting.py:Collect`.
-            rescale (bool): Whether rescale back to original shape.
-
-        Returns:
-            Tensor: The output segmentation map.
-        """
-
-        assert self.test_cfg.mode in ['slide', 'whole']
-        ori_shape = img_meta[0]['ori_shape']
-        assert all(_['ori_shape'] == ori_shape for _ in img_meta)
-        if self.test_cfg.mode == 'slide':
-            seg_logit = self.slide_inference(img, img_meta, rescale)
-        else:
-            seg_logit = self.whole_inference(img, img_meta, rescale)
-        if self.out_channels == 1:
-            output = F.sigmoid(seg_logit)
-        else:
-            output = F.softmax(seg_logit, dim=1)
-        flip = img_meta[0]['flip']
-        if flip:
-            flip_direction = img_meta[0]['flip_direction']
-            assert flip_direction in ['horizontal', 'vertical']
-            if flip_direction == 'horizontal':
-                output = output.flip(dims=(3, ))
-            elif flip_direction == 'vertical':
-                output = output.flip(dims=(2, ))
-
-        return output

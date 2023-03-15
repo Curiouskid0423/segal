@@ -114,10 +114,11 @@ class ActiveLearningLoop:
                 assert isinstance(updated_mask, np.ndarray), 'query mask should be saved as np.array type.'
                 self.query_dataset.masks = updated_mask
 
+        # get queries in the format of pixel map and truncate trailing zero rows created by `drop_last=False`
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
         query_pixel_map = query_pixel_map[:len(self.dataset.masks)] 
 
-        # Set train_set's mask to be the masks computed on query_set
+        # set train_set's mask to be the masks computed on query_set
         new_query_mask = np.logical_or(self.query_dataset.masks, query_pixel_map)
         if rank == 0:
             self.dataset.masks = new_query_mask
@@ -129,8 +130,6 @@ class ActiveLearningLoop:
                 with open(osp.join(self.queries_save_dir, file_name), 'wb') as fs:
                     pickle.dump(new_query_mask, fs)
         self.num_labelled_pixels += self.sample_settings['budget_per_round']
-        
-        gc.collect()
         
         return True
 

@@ -20,12 +20,6 @@ from mmseg.datasets import build_dataloader, build_dataset
 from mmseg.utils import get_root_logger, find_latest_checkpoint
 from mmseg.core import DistEvalHook, EvalHook
 
-# imports to register segal customized mmcv blocks
-from segal.runner import *
-from segal.hooks import *
-from segal.transforms import * 
-from segal.losses import *
-
 def is_nested_tuple(x):
     return isinstance(x, tuple) and all([isinstance(it, tuple) for it in x])
 
@@ -63,7 +57,7 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
     # set max_epochs in runner's config
     if runner_cfg.type == 'ActiveLearningRunner':
         if not is_nested_tuple(cfg.workflow[0]):
-            # only consider the case where `reset_each_round = True`, in the case
+            # only consider the case where `reset_each_round = False`, in the case
             # where it is False, runner.run with modify max_epochs at each round
             query_epochs = None
             for mode, iteration in cfg.workflow:
@@ -74,6 +68,15 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
         else:
             flow = flatten_nested_tuple_list(cfg.workflow)
             runner_cfg.max_epochs = sum([ep for mode, ep in flow if mode == 'train'])
+    elif runner_cfg.type == 'MultiTaskActiveRunner':
+        assert len(cfg.workflow) == 2, "MultiTaskActiveRunner only supports sample-regularly now"
+        train_flow, query_flow = cfg.workflow
+        assert query_flow[0] == 'query'
+        train_base_flow, repeat = train_flow
+        epochs_per_round = sum([num for el, num in train_base_flow]) * repeat
+        runner_cfg.max_epochs = epochs_per_round * runner_cfg.sample_rounds
+        if hasattr(cfg, 'mae_warmup_epochs'):
+            runner_cfg.max_epochs += cfg.mae_warmup_epochs
             
     runner = build_runner(
         runner_cfg,
@@ -148,7 +151,14 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
     """
     
     if distributed:
-        find_unused_parameters = cfg.get('find_unused_parameters', False)
+        
+        # NOTE: set `find_unused_parameters=True` in the case of multi-task training since
+        # inevitably some parameters in the separate projection heads will not be used
+        if cfg.runner.type == 'MultiTaskActiveRunner':
+            find_unused_parameters = True
+        else:
+            find_unused_parameters = cfg.get('find_unused_parameters', False)
+        
         # Sets the `find_unused_parameters` parameter in
         # torch.nn.parallel.DistributedDataParallel
         model = MMDistributedDataParallel(
@@ -233,7 +243,7 @@ def train_al_segmentor(
     elif cfg.load_from:
         runner.load_checkpoint(cfg.load_from)
 
-    if cfg.runner.type == 'ActiveLearningRunner':
+    if cfg.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']:
         runner.run(datasets, configs=cfg)
     else:
         data_loaders = setup_dataloaders(cfg, distributed, datasets)

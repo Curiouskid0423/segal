@@ -1,12 +1,14 @@
 """
 Helper functions to de-clutter ActiveLearningRunner class.
 """
-from mmcv.runner import BaseModule
 from argparse import Namespace
-from typing import List
+from typing import List, Tuple
+import numpy as np
 import torch
 from torchvision.transforms import InterpolationMode as IM
 import torchvision.transforms.functional as TF
+from mmcv.runner import BaseModule
+from mmseg.utils import get_root_logger
 from segal.active import get_heuristics
 
 def recursively_set_is_init(model: BaseModule, value: bool):
@@ -95,3 +97,83 @@ def process_workflow(workflow: List, sample_rounds: int):
         return result
     else:
         return workflow
+
+def get_max_iters(
+    config: Namespace, max_epochs, sample_mode: str, dataset_size: int):
+    """
+    Given the config and dataset size (required in pixel-based), compute the 
+    total iterations based on the total number of epochs, considering both the 
+    case of sample regularly and irregularly.
+    """
+
+    num_devices, samples_per_gpu = len(config.gpu_ids), config.data.samples_per_gpu
+    effective_batch_size = samples_per_gpu * num_devices
+    sample_settings = getattr(config.active_learning.settings, sample_mode)
+    sample_rounds = config.runner.sample_rounds
+
+    if sample_mode == 'pixel':
+        iter_per_epoch = np.ceil(dataset_size / effective_batch_size).astype(int)
+        return max_epochs * iter_per_epoch
+    elif sample_mode == 'image':
+        init = sample_settings.initial_pool
+        query = sample_settings.budget_per_round
+        total_epochs = 0
+        flow = process_workflow(config.workflow, sample_rounds)
+        # `iter_this_round` increases in image-based sampling over time
+        for r in range(sample_rounds):
+            iter_this_round = np.ceil((init + query * r) / effective_batch_size).astype(int)
+            for mode, epoch in flow[r]:
+                if mode == 'train':
+                    total_epochs += epoch * iter_this_round
+        return total_epochs
+    else:
+        raise NotImplementedError
+
+def check_workflow_validity(flow_per_round):
+    """
+    Ensure that the workflow, whether regular or irregular sampling, 
+    is valid, e.g. has no repeated arguments.
+    """
+    wf = [m for m, _ in flow_per_round]
+    return len(wf) == 1 and wf[0] == 'train' \
+        or (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
+        or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
+
+
+def process_multitask_workflow(workflow: List[Tuple], rounds: int):
+
+    """
+    base_train_flow = (('train_mae', 1), ('train_seg', 4))
+    [ (base_train_flow, 2), ('query', 1) ]
+    """
+    
+    assert len(workflow) == 2, ("multi-task workflow currently only supports sample-regularly "\
+        + "workflow with length of 2, ie. `train` and `query` where `train` is a tuple of tuple")
+
+    # unravel the multi-task training workflow
+    per_round = []
+    base_flow, repeat = workflow[0]
+    for rep in range(repeat):
+        per_round.extend(list(base_flow))
+    per_round.append(workflow[1])
+
+    return [(per_round) for _ in range(rounds)] 
+
+def pixel_mask_check(data_batch, batch_size, index, sample_mode, interval=80, logger=None):
+    if index % interval == 0 and sample_mode == 'pixel':
+        true_count = np.count_nonzero(data_batch[1].numpy()) // batch_size
+        if logger == None:
+            logger = get_root_logger()
+        logger.info(f"Mask[{index}] check: mask's True value count = {true_count}")
+
+def preprocess_data_and_mask(data_batch, mask, ignore_index=255):
+    """
+    Given a data_batch and its corresponding masks, perform required 
+    preprocessing and return the data_batch appropriately masked with ignore_index
+    """
+    ground_truth = data_batch['gt_semantic_seg'].data[0]
+    mask = adjust_mask(
+        mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth[0].squeeze().size())
+    ground_truth.flatten()[~mask.flatten()] = ignore_index
+    data_batch['gt_semantic_seg'].data[0]._data = ground_truth
+    return data_batch

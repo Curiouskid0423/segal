@@ -3,7 +3,6 @@ This file should perform training the way MMSeg conventionally does,
 but with some Active Learning wrappers that we created.
 """
 
-import argparse
 import copy
 import os
 import os.path as osp
@@ -19,7 +18,7 @@ from typing import Dict
 import mmcv
 from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.runner import get_dist_info, init_dist, wrap_fp16_model
-from mmcv.utils import Config, DictAction, get_git_hash
+from mmcv.utils import Config, get_git_hash
 """ MMSegmentation """
 from mmseg import __version__
 from mmseg.apis import init_random_seed, set_random_seed
@@ -27,105 +26,20 @@ from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
-from segal.utils.train import train_al_segmentor, flatten_nested_tuple_list as flatten, is_nested_tuple
+from segal.utils.misc import parse_args
+from segal.utils.train import \
+    (train_al_segmentor, flatten_nested_tuple_list as flatten, is_nested_tuple)
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='Train a segmentor')
-    parser.add_argument('config', help='train config file path')
-    parser.add_argument('--work-dir', help='the dir to save logs and models')
-    parser.add_argument(
-        '--load-from', help='the checkpoint file to load weights from')
-    parser.add_argument(
-        '--resume-from', help='the checkpoint file to resume from')
-    parser.add_argument(
-        '--no-validate',
-        action='store_true',
-        help='whether not to evaluate the checkpoint during training')
-    group_gpus = parser.add_mutually_exclusive_group()
-    group_gpus.add_argument(
-        '--gpus',
-        type=int,
-        help='(Deprecated, please use --gpu-id) number of gpus to use '
-        '(only applicable to non-distributed training)')
-    group_gpus.add_argument(
-        '--gpu-ids',
-        type=int,
-        nargs='+',
-        help='(Deprecated, please use --gpu-id) ids of gpus to use '
-        '(only applicable to non-distributed training)')
-    group_gpus.add_argument(
-        '--gpu-id',
-        type=int,
-        default=0,
-        help='id of gpu to use '
-        '(only applicable to non-distributed training)')
-    parser.add_argument('--seed', type=int, default=None, help='random seed')
-    parser.add_argument(
-        '--diff_seed',
-        action='store_true',
-        help='Whether or not set different seeds for different ranks')
-    parser.add_argument(
-        '--deterministic',
-        action='store_true',
-        help='whether to set deterministic options for CUDNN backend.')
-    parser.add_argument(
-        '--options',
-        nargs='+',
-        action=DictAction,
-        help="--options is deprecated in favor of --cfg_options' and it will "
-        'not be supported in version v0.22.0. Override some settings in the '
-        'used config, the key-value pair in xxx=yyy format will be merged '
-        'into config file. If the value to be overwritten is a list, it '
-        'should be like key="[a,b]" or key=a,b It also allows nested '
-        'list/tuple values, e.g. key="[(a,b),(c,d)]" Note that the quotation '
-        'marks are necessary and that no white space is allowed.')
-    parser.add_argument(
-        '--cfg-options',
-        nargs='+',
-        action=DictAction,
-        help='override some settings in the used config, the key-value pair '
-        'in xxx=yyy format will be merged into config file. If the value to '
-        'be overwritten is a list, it should be like key="[a,b]" or key=a,b '
-        'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
-        'Note that the quotation marks are necessary and that no white space '
-        'is allowed.')
-    parser.add_argument(
-        '--launcher',
-        choices=['none', 'pytorch', 'slurm', 'mpi'],
-        default='none',
-        help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument(
-        '--auto-resume',
-        action='store_true',
-        help='resume from the latest checkpoint automatically.')
-    args = parser.parse_args()
-    if 'LOCAL_RANK' not in os.environ:
-        os.environ['LOCAL_RANK'] = str(args.local_rank)
-
-    if args.options and args.cfg_options:
-        raise ValueError(
-            '--options and --cfg-options cannot be both '
-            'specified, --options is deprecated in favor of --cfg-options. '
-            '--options will not be supported in version v0.22.0.')
-    if args.options:
-        warnings.warn('--options is deprecated in favor of --cfg-options. '
-                      '--options will not be supported in version v0.22.0.')
-        args.cfg_options = args.options
-
-    return args
+""" Imports to register segal customized mmcv blocks """
+from segal.runner import *
+from segal.hooks import *
+from segal.transforms import * 
+from segal.losses import *
+from segal.method import *
 
 def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
 
     def check_flip_before_crop(transforms):
-        # edit_types = ['Resize', 'Flip', 'Crop']
-        # for tf in transforms:
-        #     if any([e in tf['type'] for e in edit_types]):
-        #         if not ('Mask' in tf['type']):
-        #             print(tf['type'])
-        #             return False
-        # return True
         if mode != 'train' \
             or config.runner.type in ['IterBasedRunner', 'EpochBasedRunner']:
             return True
@@ -139,15 +53,20 @@ def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
 
     datasets = {}
     
-    if is_nested_tuple(config.workflow[0]):
-        assert len(config.workflow) == config.runner.sample_rounds, \
-            "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
+    if config.runner.type == 'ActiveLearningRunner':
+        if is_nested_tuple(config.workflow[0]):
+            assert len(config.workflow) == config.runner.sample_rounds, \
+                "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
     
-    flow = flatten(config.workflow)
+        flow = flatten(config.workflow)
 
-    assert all([mode in ['train', 'val', 'query'] for (mode, _) in flow]), \
-        "workflow has to be either train, val, or query"
-
+        assert all([mode in ['train', 'val', 'query'] for (mode, _) in flow]), \
+            "workflow has to be either train, val, or query"
+    elif config.runner.type == 'MultiTaskActiveRunner':
+        flow = [('train', None), ('query', None)] # placeholder to signal instantiation of the two datasets
+    else:
+        flow = config.workflow
+        
     for mode, _ in flow:
         data_cfg = getattr(config.data, mode)
 
@@ -172,7 +91,7 @@ def insert_ignore_index(config: Namespace, value: int):
     assert hasattr(config, "model")
     for k in config.model.keys():
         entry = getattr(config.model, k)
-        if 'loss_decode' in entry:
+        if isinstance(entry, dict) and 'loss_decode' in entry:
             entry.ignore_index = value
             entry.loss_decode.avg_non_ignore=True
 
@@ -184,7 +103,8 @@ def main():
     cfg = Config.fromfile(args.config)
 
     # manually insert ignore_index for pixel sampling (and region-based in future development)
-    if cfg.runner.type=='ActiveLearningRunner' and cfg.runner.sample_mode != 'image':
+    if cfg.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner'] \
+        and cfg.runner.sample_mode != 'image':
         ignore_index = cfg.active_learning.settings.pixel.ignore_index
         insert_ignore_index(config=cfg, value=ignore_index)
 

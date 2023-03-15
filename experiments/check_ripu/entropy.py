@@ -22,6 +22,9 @@ model = dict(pretrained='open-mmlab://resnet101_v1c', backbone=dict(depth=101))
 load_from = 'experiments/gtav_ckpt_deeplabv3+r101.pth'
 data = dict( samples_per_gpu=SPG, workers_per_gpu=1 ) 
 
+# mixed precision
+fp16 = dict(loss_scale='dynamic')
+
 _base_ = [ 
     MODEL_FILE, 
     DATA_FILE, 
@@ -58,10 +61,11 @@ evaluation = dict(interval=QUERY_EPOCH, by_epoch=False, metric='mIoU', pre_eval=
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
 optimizer = dict(type='SGD', lr=0.0005, momentum=0.9, weight_decay=0.0005)
 optimizer_config = dict()
+
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=False)
 
 log_config = dict(
-    interval=2,
+    interval=100,
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(

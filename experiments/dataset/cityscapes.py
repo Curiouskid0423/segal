@@ -4,7 +4,7 @@ data_root = '/shared/yutengli/data/cityscapes/'
 
 # Resize the ENTIRE dataset to speed up training
 # scale_size=(512, 1024) 
-scale_size = (200, 400)
+scale_size = (256, 512)
 crop_size =(256, 256)
 
 img_norm_cfg = dict(
@@ -12,7 +12,7 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    dict(type='Resize', img_scale=scale_size, ratio_range=(0.5, 2.0)),
+    dict(type='Resize', img_scale=scale_size, ratio_range=(0.8, 2.0)),
     dict(type='RandomFlip', prob=0.5, direction='horizontal'), 
     # dict(type='RandomCropWithMask', crop_size=crop_size, cat_max_ratio=0.75),
     dict(type='PhotoMetricDistortion'),
