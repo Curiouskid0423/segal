@@ -18,11 +18,7 @@ _base_ = [
 checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segformer/mit_b0_20220624-7e0fe6dd.pth'  # noqa
 
 model = dict(
-    backbone=dict(
-        init_cfg=dict(type='Pretrained', checkpoint=checkpoint),
-        patch_sizes=[7, 3, 3, 3],
-        strides=[7, 3, 3, 3], # non-overlapping patches
-    ),
+    backbone=dict(init_cfg=dict(type='Pretrained', checkpoint=checkpoint)),
     test_cfg=dict(mode='slide', crop_size=(512, 512), stride=(384, 384))
 )
 
@@ -62,14 +58,14 @@ log_config = dict(
 interval=50,
     hooks=[
         dict(type='TextLoggerHook'),
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='active_domain_adapt',
-                # name=f'nonoverlap_segformer_b0_batch{SPG*GPU}_384x384_2080Ti',
-                name=f'nonoverlap_segformer_b0_cs_2080Ti',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='active_domain_adapt',
+        #         # name=f'nonoverlap_segformer_b0_batch{SPG*GPU}_384x384_2080Ti',
+        #         name=f'nonoverlap_segformer_b0_cs_2080Ti',
+        #     )
+        # )
     ]
 )

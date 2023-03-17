@@ -3,11 +3,10 @@ Full model file
 """
 from argparse import Namespace
 import math
-import einops
 import torch.nn as nn
 from mmcv.cnn.utils.weight_init import (constant_init, normal_init,
                                         trunc_normal_init)
-from mmcv.runner import BaseModule, ModuleList
+from mmcv.runner import BaseModule, auto_fp16
 from mmseg.models.builder import BACKBONES
 from mmseg.models.utils import nlc_to_nchw
 from segal.method.mit import MixVisionTransformer
@@ -111,6 +110,7 @@ class TwinMixVisionTransformer(BaseModule):
         x = nlc_to_nchw(x, hw_shape) # (batch, num_patches*(patch_size**2), embed_dim)
         return x
 
+    @auto_fp16()
     def forward(self, x, train_type='seg'):
         assert train_type in ['mae', 'seg']
         if train_type == 'mae':

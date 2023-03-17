@@ -1,7 +1,6 @@
 norm_cfg = dict(type='SyncBN', requires_grad=True)
-
-# check out details of EncoderDecoder at mmseg Github /mmseg/models/segmentors/encoder_decoder.py
 PATCH_SIZE_LIST = [3, 3, 3]
+# check out details of EncoderDecoder at mmseg Github /mmseg/models/segmentors/encoder_decoder.py
 model = dict(
     type='MultiTaskSegmentor',
     pretrained=None,
@@ -13,7 +12,7 @@ model = dict(
         ),
         mae_projection=dict(
             in_channels=3, embed_dims=32, num_layers=2,
-            num_heads=1, patch_size=3, sr_ratios=2,
+            num_heads=1, patch_size=3, sr_ratios=1,
             mask_ratio=0.2, rec_crop_size=(144, 144)
         ),
         encoder=dict(
@@ -21,10 +20,10 @@ model = dict(
             num_stages=3,
             num_layers=[2, 2, 2],
             num_heads=[2, 5, 8],
-            patch_sizes=PATCH_SIZE_LIST,
-            strides=PATCH_SIZE_LIST,
-            padding=0,
-            sr_ratios=[2, 2, 1], 
+            patch_sizes=PATCH_SIZE_LIST, # enforce 'non-overlapping' in shared modules
+            strides=PATCH_SIZE_LIST,     # enforce 'non-overlapping' in shared modules
+            padding=0,                   # enforce 'non-overlapping' in shared modules
+            sr_ratios=[4, 2, 1], 
             out_indices=(0, 1, 2),
         ),
         mlp_ratio=4,

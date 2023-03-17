@@ -104,7 +104,6 @@ class MixVisionTransformer(BaseModule):
             for x in torch.linspace(0, drop_path_rate, sum(num_layers))
         ]  # stochastic num_layer decay rule
 
-        # define `self.layers`
         # 1 stage of Transformer Block:
         # patch_embedding --> (attn -> mix-ffn -> norm) * num_layer --> .....
         cur = 0        
@@ -180,8 +179,8 @@ class MixVisionTransformer(BaseModule):
                 # patchify
                 x, hw_shape = self.mae_patch_projection[i](x)
                 for block in layer[1]:
+                    # skip the spatial-reduction layer in MAE stage
                     x = block(x, hw_shape, sr_enable=False)
-                    # x = block(x, hw_shape)
             else:
                 x, hw_shape = layer[0](x) # patchify
                 for block in layer[1]:

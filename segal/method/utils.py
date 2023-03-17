@@ -1,10 +1,17 @@
+import os
+import os.path as osp
+from PIL import Image
 import numpy as np
 import torch
+from typing import List, Dict
+from torchvision.transforms import ToPILImage
 from argparse import Namespace
 from mmcv.cnn import build_norm_layer
 from mmcv.runner import ModuleList
 from mmseg.models.utils import PatchEmbed
 from segal.method.mit_modules import TransformerEncoderLayer
+
+tensor2image = ToPILImage(mode='RGB')
 
 def build_embedding(
     cfg: Namespace, mode: str = 'overlap', 
@@ -52,6 +59,8 @@ def build_projection(
     
     # embedding layer
     if branch == 'mae':
+        assert (not hasattr(cfg, 'sr_ratios')) or cfg.sr_ratios==1, \
+            'sr_ratios can only be set to one in the MAE branch'
         patch_embed = build_embedding(
             cfg=cfg, mode='non_overlap', norm_cfg=norm_cfg)
     elif branch == 'seg':
@@ -108,3 +117,26 @@ def get_random_crops(image, crop_size, num=4):
         crop_bbox = get_crop_bbox(image, crop_size=crop_size)
         results.append(crop(image, crop_bbox))
     return results
+
+
+def save_reconstructed_images(
+    path, ori: torch.Tensor, rec: torch.Tensor, img_metas: List[Dict], num_samples=8):
+    
+    assert len(ori) == len(rec)
+    _, _, H, W = ori.shape
+    os.makedirs(name=path, exist_ok=True)
+    norm_cfg = img_metas[0]['img_norm_cfg']
+    mean, std = norm_cfg['mean'], norm_cfg['std']
+    mean, std = mean[:, None, None], std[:, None, None]
+
+    unnormalize = lambda x: (x.cpu() * std + mean).type(torch.uint8)
+
+    iterations = min(len(ori), num_samples)
+    for i in range(iterations):
+        file_name = osp.join(path, f'sample{i}.jpg')
+        result = Image.new('RGB', (W*2, H))
+        result.paste(
+            im=tensor2image(unnormalize(ori[i])), box=(0,0))
+        result.paste(
+            im=tensor2image(unnormalize(rec[i])), box=(W, 0))
+        result.save(file_name)

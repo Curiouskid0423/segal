@@ -50,6 +50,7 @@ class MultiTaskSegmentor(EncoderDecoder):
         self.logger = get_root_logger()
         # save config variables
         self.mae_configs = Namespace(**backbone['mae_projection'])
+        self.mae_decoder_configs = Namespace(**auxiliary_head)
         self.seg_configs = Namespace(**backbone['seg_projection'])
 
         # mae required variables 
@@ -68,7 +69,8 @@ class MultiTaskSegmentor(EncoderDecoder):
 
         # set num_patches in backbone
         self.mask_ratio = self.mae_configs.mask_ratio
-        decoder_embedding_dim = 1 # FIXME: remove me
+        decoder_embedding_dim = self.mae_decoder_configs.channels 
+        # decoder_embedding_dim = 1 # FIXME: not expressive enough
         self.mask_tokens = nn.Parameter(torch.randn(1, 1, decoder_embedding_dim) * 0.02)
         
         mae_patch = self.mae_configs.patch_size
@@ -133,7 +135,7 @@ class MultiTaskSegmentor(EncoderDecoder):
         truncate_mask_at_encode = True # a boolean value to decide whether the encoder takes in masks
 
         if stage == 'mae':
-            subimages = self.sample_subimages(img, num_sample=8) # 16 # (B, C, H, W)
+            subimages = self.sample_subimages(img, num_sample=4) # 16 # (B, C, H, W)
             batch_size = len(subimages)
             ids_shuffle = get_shuffled_ids(
                 batch_size=batch_size, 
@@ -152,6 +154,7 @@ class MultiTaskSegmentor(EncoderDecoder):
                     visible_patches, 'b c l (ph pw) -> b c (l ph) pw', ph=mae_patch_size, pw=mae_patch_size)
             else:
                 b, c, _, f = visible_patches.shape
+                assert self.mask_tokens.shape[-1] == 1, 'fix mask token length problem before proceeding'
                 visible_patches = einops.rearrange(visible_patches, 'b c l f -> b l (c f)')
                 masked_images = restore_masked(
                     visible_patches, 

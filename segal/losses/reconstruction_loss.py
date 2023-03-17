@@ -33,6 +33,6 @@ class ReconstructionLoss(nn.Module):
         assert reduction_override in (None, 'none', 'mean', 'sum')
         reduction = (
             reduction_override if reduction_override else self.reduction)
-        # FIXME: only average over the masked regions
-        loss = self.loss_weight * rec_loss(pred, target, reduction=reduction, mask=mask)
+        loss = rec_loss(pred, target, reduction=reduction, mask=mask, avg_factor=mask.sum())
+        loss = self.loss_weight * loss
         return loss

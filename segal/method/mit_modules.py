@@ -275,11 +275,10 @@ class TransformerEncoderLayer(BaseModule):
 
         self.with_cp = with_cp
 
-    def forward(self, x, hw_shape, sr_enable):
+    def forward(self, x, hw_shape, sr_enable=True):
 
         def _inner_forward(x, sr_enable):
-            x = self.attn(
-                self.norm1(x), hw_shape, identity=x, sr_enable=sr_enable)
+            x = self.attn(self.norm1(x), hw_shape, identity=x, sr_enable=sr_enable)
             x = self.ffn(self.norm2(x), hw_shape, identity=x)
             return x
 

@@ -7,13 +7,13 @@ model = dict(
     backbone=dict(
         type='TwinMixVisionTransformer',
         seg_projection=dict(
-            in_channels=3, embed_dims=32, num_layers=2, 
+            in_channels=3, embed_dims=32, num_layers=3, 
             num_heads=1, patch_size=7, stride=4, sr_ratios=8,
         ),
         mae_projection=dict(
-            in_channels=3, embed_dims=32, num_layers=4,
-            num_heads=1, patch_size=4, sr_ratios=1,
-            mask_ratio=0.6, rec_crop_size=(120, 120)
+            in_channels=3, embed_dims=32, num_layers=3,
+            num_heads=1, patch_size=8, sr_ratios=1,
+            mask_ratio=0.3, rec_crop_size=(160, 160)
         ),
         encoder=dict(
             embed_dims=32,
@@ -21,8 +21,8 @@ model = dict(
             num_layers=[2, 2, 2],
             num_heads=[2, 5, 8],
             patch_sizes=[3, 3, 3],  # fix patch_size at each layer. downsample by sr_ratio.
-            strides=[2, 2, 2],      # only used in SEG stage for PatchEmbedding.
-            sr_ratios=[2, 2, 1],    # spatial_reduction used in Attention. ignored in MAE stage.
+            strides=[2, 2, 2],      # only used in seg stage for PatchEmbedding.
+            sr_ratios=[4, 2, 1],    # spatial_reduction used in Attention. ignored in MAE stage.
             out_indices=(0, 1, 2),
         ),
         mlp_ratio=4,
