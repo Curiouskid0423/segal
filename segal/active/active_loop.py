@@ -5,18 +5,17 @@ Code mostly similar to BAAL.
 """
 from typing import Callable
 import numpy as np
-from copy import deepcopy
 from datetime import datetime
 import os
 import os.path as osp
 import pickle
 import torch.utils.data as torchdata
-from mmseg.utils import get_root_logger
+import mmcv
 from mmcv.runner import get_dist_info
+from mmseg.utils import get_root_logger
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
 from PIL import Image
-import gc
 
 CWD = os.getcwd()
 
@@ -62,7 +61,7 @@ class ActiveLearningLoop:
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
         self.time_hash = datetime.now().strftime("%m%d_%H_%M")
-        self.queries_save_dir = osp.join(CWD, f'queries_save_dir_{self.time_hash}')
+        # self.queries_save_dir = osp.join(CWD, f'queries_save_dir_{self.time_hash}')
 
         if hasattr(configs.active_learning, 'visualize'):
             assert configs.active_learning.visualize.size > 0
@@ -96,42 +95,46 @@ class ActiveLearningLoop:
         return False
 
     def update_pixel_labelled_pool(self):
-
+        
+        # NOTE: make sure no gradients used in this method
         rank, world = get_dist_info()
-
-        # single gpu / multi gpu, first pass / multi gpu, late passes
-        file_name = f'query_rank_0.pkl'
-        if not self.has_stepped:
-            # skip the first step() call since no file to read from
-            self.has_stepped = True
-        elif world > 1 and rank != 0: # multi-gpu setting
-            # if not rank=0 worker, load the new query mask from `self.queries_save_dir`
-            file_path = osp.join(self.queries_save_dir, file_name)
-            assert osp.exists(file_path), f'query mask file save path not exist ({file_path})'
-            with open(file_path, 'rb') as fs:
-                updated_mask = pickle.load(fs)
-                self.logger.info(f"Loading from queries from {file_path}")
-                assert isinstance(updated_mask, np.ndarray), 'query mask should be saved as np.array type.'
-                self.query_dataset.masks = updated_mask
 
         # get queries in the format of pixel map and truncate trailing zero rows created by `drop_last=False`
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
-        query_pixel_map = query_pixel_map[:len(self.dataset.masks)] 
+        query_pixel_map = query_pixel_map[:len(self.query_dataset)] 
 
-        # set train_set's mask to be the masks computed on query_set
-        new_query_mask = np.logical_or(self.query_dataset.masks, query_pixel_map)
+        # write the updated masks into their respective paths
         if rank == 0:
-            self.dataset.masks = new_query_mask
-            self.query_dataset.masks = deepcopy(new_query_mask)
-            # save the query file for other devices to collect from
-            if world > 1:
-                os.makedirs(self.queries_save_dir, exist_ok=True)
-                # overwrite with the latest masks
-                with open(osp.join(self.queries_save_dir, file_name), 'wb') as fs:
-                    pickle.dump(new_query_mask, fs)
+            self.update_masks_to_files(query_pixel_map)
+
         self.num_labelled_pixels += self.sample_settings['budget_per_round']
         
         return True
+
+    def get_mask_fname_by_idx(self, x):
+        return self.query_dataset[x]['img_metas'].data['mask_filename']
+
+    def update_masks_to_files(self, new_maps):
+
+        self.logger.info(f"saving updated masks...")
+        pbar = mmcv.ProgressBar(task_num=len(new_maps))
+        assert len(new_maps) == len(self.query_dataset)
+    
+        for idx, mask in enumerate(new_maps):
+            mask_filename = self.get_mask_fname_by_idx(idx)
+            # read the current masks
+            with open(mask_filename, 'rb') as fs:
+                old_mask = pickle.load(fs)
+                new_mask = np.logical_or(old_mask, mask)
+            # write the new masks after XOR operation
+            with open(mask_filename, 'wb') as fs:
+                pickle.dump(new_mask, fs)
+            if idx % 500 == 0:
+                with open(mask_filename, 'rb') as fs:
+                    old_count, new_count = np.count_nonzero(old_mask), np.count_nonzero(pickle.load(fs))
+                    print(f" >> [{idx}] current mask: {old_count}, after XOR operator: {new_count}")
+                
+            pbar.update()
 
     def step(self, pool=None) -> bool:
         """
@@ -205,7 +208,10 @@ class ActiveLearningLoop:
             self.logger.info("saving visualization...")
             for v in self.vis_indices:
                 # original image (256x512 for Cityscapes) and corresponding mask
-                ori, mask = self.query_dataset.get_raw(v), self.query_dataset.masks[v]
+                ori, mask_filename = self.query_dataset.get_raw(v), self.get_mask_fname_by_idx(v)
+                with open(mask_filename, 'rb+') as fs:
+                    mask = pickle.load(fs)
+
                 ori = self.revert_transforms(ori, ori['img_metas'].data)
                 file_name = osp.join(epoch_vis_dir, f"{v}.png")
                 

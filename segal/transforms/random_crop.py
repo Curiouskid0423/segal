@@ -68,9 +68,9 @@ class RandomCropWithMask(object):
         results['img_shape'] = img_shape
         
         # crop the mask
-        # mask = self.crop(results['mask'], crop_bbox)
-        # results['mask'] = mask
-        results['crop_bbox'] = crop_bbox
+        mask = self.crop(results['mask'], crop_bbox)
+        results['mask'] = mask
+        # results['crop_bbox'] = crop_bbox
 
         # crop semantic seg
         for key in results.get('seg_fields', []):

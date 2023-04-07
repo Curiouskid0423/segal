@@ -67,8 +67,8 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
 
         for i, data_batch in enumerate(self.data_loader):
             # mask check before segmentation
-            utils.pixel_mask_check(
-                data_batch, batch_size, i, self.sample_mode, logger=self.logger)
+            # utils.pixel_mask_check(
+            #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, mode='train_seg', **kwargs)

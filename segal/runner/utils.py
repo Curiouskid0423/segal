@@ -54,8 +54,6 @@ def adjust_mask(mask: torch.Tensor, meta: List, scale=None):
     if scale != None:
         mask = TF.resize(mask.unsqueeze(1), scale, IM.NEAREST).squeeze()
 
-    # FIXME: Adjustment for "Pad"
-
     return mask
 
 def get_heuristics_by_config(config: Namespace, sample_mode: str):
@@ -69,14 +67,6 @@ def get_heuristics_by_config(config: Namespace, sample_mode: str):
                 k=hconfig.k,
                 use_entropy=hconfig.use_entropy,
                 categories=hconfig.categories
-            )
-        elif config.active_learning.heuristic == 'sparsity':
-            heuristic = get_heuristics(
-                mode=sample_mode, 
-                name='sparsity',
-                k=hconfig.k,
-                inflection=hconfig.inflection,
-                alpha=1.8 if not hasattr(hconfig, 'alpha') else hconfig.alpha
             )
         else:
             raise NotImplementedError("Unknown heuristic for the provided heuristic_cfg.")
@@ -161,19 +151,18 @@ def process_multitask_workflow(workflow: List[Tuple], rounds: int):
 
 def pixel_mask_check(data_batch, batch_size, index, sample_mode, interval=80, logger=None):
     if index % interval == 0 and sample_mode == 'pixel':
-        true_count = np.count_nonzero(data_batch[1].numpy()) // batch_size
+        true_count = np.count_nonzero(data_batch['mask'].numpy()) // batch_size
         if logger == None:
             logger = get_root_logger()
         logger.info(f"Mask[{index}] check: mask's True value count = {true_count}")
 
-def preprocess_data_and_mask(data_batch, mask, ignore_index=255):
+def preprocess_data_and_mask(data_batch, ignore_index=255):
     """
     Given a data_batch and its corresponding masks, perform required 
     preprocessing and return the data_batch appropriately masked with ignore_index
     """
     ground_truth = data_batch['gt_semantic_seg'].data[0]
-    mask = adjust_mask(
-        mask=mask, meta=data_batch['img_metas'].data[0], scale=ground_truth[0].squeeze().size())
+    mask = data_batch['mask']
     ground_truth.flatten()[~mask.flatten()] = ignore_index
     data_batch['gt_semantic_seg'].data[0]._data = ground_truth
     return data_batch

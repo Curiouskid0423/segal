@@ -6,6 +6,7 @@ but with some Active Learning wrappers that we created.
 import copy
 import os
 import os.path as osp
+from logging import Logger
 import time
 import warnings
 import torch
@@ -37,19 +38,7 @@ from segal.transforms import *
 from segal.losses import *
 from segal.method import *
 
-def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
-
-    def check_flip_before_crop(transforms):
-        if mode != 'train' \
-            or config.runner.type in ['IterBasedRunner', 'EpochBasedRunner']:
-            return True
-        flip_idx, crop_idx = None, None
-        for idx, tf in enumerate(transforms):
-            if 'Flip' in tf['type']:
-                flip_idx = idx
-            elif 'Crop' in tf['type']:
-                crop_idx = idx
-        return flip_idx==None or crop_idx==None or flip_idx < crop_idx
+def preprocess_datasets(config: Namespace, logger: Logger = None) -> Dict[str, Dataset]:
 
     datasets = {}
     
@@ -71,7 +60,6 @@ def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
         data_cfg = getattr(config.data, mode)
 
         assert isinstance(data_cfg.pipeline, list)
-        assert check_flip_before_crop(data_cfg.pipeline)
 
         # no need to independently create a `query` dataset in `image-sampling`
         if mode == 'query' and config.runner.sample_mode == 'image':
@@ -82,8 +70,9 @@ def preprocess_datasets(config: Namespace) -> Dict[str, Dataset]:
             data_cfg.pipeline = config.data.train.pipeline
         # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
         if not (mode in datasets.keys()):
-            datasets[mode] = build_dataset(
-                data_cfg, dict(test_mode=False if mode=='train' else True))
+            if logger != None:
+                logger.info(f'Loading `{mode}` set...')
+            datasets[mode] = build_dataset(data_cfg, dict(test_mode=False if mode=='train' else True))
 
     return datasets
 
@@ -204,7 +193,7 @@ def main():
     # logger.info(model)
 
     """ PART 3. Dataset """
-    datasets = preprocess_datasets(config=cfg)
+    datasets = preprocess_datasets(config=cfg, logger=logger)
     example_dataset = datasets['train']
 
     if cfg.checkpoint_config is not None:

@@ -46,9 +46,11 @@ class RandomFlipWithMask(object):
             # flip image
             results['img'] = mmcv.imflip(
                 results['img'], direction=results['flip_direction'])
+
             # flip mask
-            results['mask'] = mmcv.imflip(
-                results['mask'], direction=results['flip_direction'])
+            axis = [1] if (results['flip_direction'] == 'horizontal') else [0]
+            results['mask'] = results['mask'].flip(dims=axis)
+
             # flip segs
             for key in results.get('seg_fields', []):
                 # use copy() to make numpy stride positive

@@ -1,6 +1,11 @@
 import numpy as np
 import mmcv
+from torchvision.transforms import InterpolationMode as IM
+import torchvision.transforms.functional as TF
+from mmcv.image import rescale_size
 from mmseg.datasets import PIPELINES
+
+# most of this file is copied from the Resize transform in `mmcv`
 
 @PIPELINES.register_module()
 class ResizeWithMask(object):
@@ -232,12 +237,15 @@ class ResizeWithMask(object):
 
     def _resize_mask(self, results):
         """Resize mask with ``results['scale']``."""
+        raw_mask = results['mask'].unsqueeze(0) # (C, H, W) as torchvision.transforms expect
         if self.keep_ratio:
-            mask = mmcv.imrescale(
-                results['mask'], results['scale'], interpolation='nearest')
+            h, w = results['img'].shape[:2]
+            mask_size = rescale_size((w, h), results['scale'], return_scale=False)
+            mask_size = mask_size[::-1] # convert (w,h) to shape (h,w) to be compliant with torchvision
         else:
-            mask = mmcv.imresize(
-                results['mask'], results['scale'], interpolation='nearest')
+            mask_size = results['scale']
+        mask = TF.resize(raw_mask, mask_size, IM.NEAREST).squeeze()
+
         results['mask'] = mask
         
     def __call__(self, results):

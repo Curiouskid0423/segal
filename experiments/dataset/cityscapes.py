@@ -1,31 +1,31 @@
 # dataset settings
 dataset_type = 'CityscapesDataset' # train=2975, val=500, test=1525
 data_root = '/shared/yutengli/data/cityscapes/'
-
-# Resize the ENTIRE dataset to speed up training
-# scale_size=(512, 1024) 
-scale_size = (256, 512)
-crop_size =(256, 256)
+META_KEYS = (
+    'filename', 'mask_filename', 'ori_filename', 
+    'ori_shape','img_shape', 'pad_shape', 
+    'scale_factor', 'img_norm_cfg')
+# mask_dir = './work_dirs/entropy/masks'
+mask_dir = './work_dirs/reproduce/masks'
+scale_size = (512, 256) # (width, height) by mmcv convention
+# scale_size = (1024, 512) # (width, height) by mmcv convention
+crop_size =(200, 200)
+# crop_size =(384, 384)
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    dict(type='Resize', img_scale=scale_size, ratio_range=(0.8, 2.0)),
-    dict(type='RandomFlip', prob=0.5, direction='horizontal'), 
-    # dict(type='RandomCropWithMask', crop_size=crop_size, cat_max_ratio=0.75),
+    dict(type='LoadMasks', mask_dir=mask_dir),
+    dict(type='ResizeWithMask', img_scale=scale_size, ratio_range=(0.8, 2.0)),
+    dict(type='RandomFlipWithMask', prob=0.5, direction='horizontal'), 
+    dict(type='RandomCropWithMask', crop_size=crop_size, cat_max_ratio=0.75),
     dict(type='PhotoMetricDistortion'),
     dict(type='Normalize', **img_norm_cfg),
     # dict(type='Pad', size=scale_size, pad_val=0, seg_pad_val=255),
     dict(type='DefaultFormatBundle'),
-    dict(type='Collect', 
-        keys=['img', 'gt_semantic_seg'],
-        meta_keys=(
-            'filename', 'ori_filename', 'ori_shape',
-            'img_shape', 'pad_shape', 'scale_factor', 'flip',
-            'flip_direction', 'img_norm_cfg', 'scale')
-    ),
+    dict(type='Collect', keys=['img', 'gt_semantic_seg', 'mask'], meta_keys=META_KEYS),
 ]
 
 test_pipeline = [
@@ -45,11 +45,14 @@ test_pipeline = [
 
 query_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='Resize', img_scale=scale_size),
-    dict(type='RandomFlip',prob=0.5, direction='horizontal'),
+    dict(type='LoadMasks', mask_dir=mask_dir),
+    dict(type='ResizeWithMask', img_scale=scale_size),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='DefaultFormatBundle'),
-    dict(type='Collect', keys=['img'])
+    dict(type='Collect', 
+        keys=['img', 'mask'], 
+        meta_keys=META_KEYS,
+    )
 ]
 
 data = dict(

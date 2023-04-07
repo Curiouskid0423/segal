@@ -4,19 +4,13 @@ import platform
 import shutil
 import torch
 from torch.utils.data import Dataset
-import gc
-from torchvision.transforms import InterpolationMode as IM
-import torchvision.transforms.functional as TF
 import mmcv
 import numpy as np
 import time
-from copy import deepcopy
 from typing import List, Dict
 from argparse import Namespace
-# import gc # garbage collection
-# from torch.profiler import profile, record_function, ProfilerActivity
 
-from mmcv.cnn.utils import revert_sync_batchnorm
+# from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
@@ -73,7 +67,7 @@ class ActiveLearningRunner(BaseRunner):
             self.mask_size = cfg.scale_size
             self.get_initial_labels(settings, query_dataset, dataset_type='query')
             # Train and Query dataset masks have to be consistent
-            dataset.masks = deepcopy(query_dataset.masks)
+            # dataset.masks = deepcopy(query_dataset.masks)
 
         self.get_initial_labels(settings, dataset)
     
@@ -82,8 +76,7 @@ class ActiveLearningRunner(BaseRunner):
             query_dataset= query_dataset,
             get_probabilities = self.wrapper.predict_on_dataset, 
             heuristic = utils.get_heuristics_by_config(cfg, self.sample_mode),
-            configs = cfg,      
-            use_cuda = torch.cuda.is_available(),
+            configs = cfg,
             collate_fn = mmcv_collate_fn
         )
 
@@ -101,18 +94,20 @@ class ActiveLearningRunner(BaseRunner):
         """
             
         if train_mode and self.sample_mode == 'pixel':
-            data_batch, mask = data_batch
-            mask = mask.detach() # masks do not need gradients
             ignore_index = self.cfg_al.settings.pixel.ignore_index
-            data_batch = utils.preprocess_data_and_mask(data_batch, mask, ignore_index)
+            data_batch = utils.preprocess_data_and_mask(data_batch, ignore_index)
+
+        # local variable to avoid runtime error in forward() by removing 'mask'
+        data = data_batch.copy()
+        data.pop('mask', None)
 
         if self.batch_processor is not None:
             outputs = self.batch_processor(
-                self.model, data_batch, train_mode=train_mode, **kwargs)
+                self.model, data, train_mode=train_mode, **kwargs)
         elif train_mode:
-            outputs = self.model.train_step(data_batch, self.optimizer, **kwargs)
+            outputs = self.model.train_step(data, self.optimizer, **kwargs)
         else:
-            outputs = self.model.val_step(data_batch, self.optimizer, **kwargs)
+            outputs = self.model.val_step(data, self.optimizer, **kwargs)
 
         if not isinstance(outputs, dict):
             raise TypeError('"batch_processor()" or "model.train_step()"'
@@ -132,8 +127,9 @@ class ActiveLearningRunner(BaseRunner):
         time.sleep(2)  # Prevent possible deadlock during epoch transition
 
         for i, data_batch in enumerate(self.data_loader):
-            utils.pixel_mask_check(
-                data_batch, batch_size, i, self.sample_mode, logger=self.logger)
+            # utils.pixel_mask_check(
+            #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
+            # if i > 80: break # debug
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -195,8 +191,6 @@ class ActiveLearningRunner(BaseRunner):
         if not self.active_learning_loop.step():
             self.logger.info("ActiveLearningLoop returns False, stopping the experiment.")
             return False 
-
-        self.logger.info("") # skipping a line to avoid logging immediately after the progress bar
         
         if sample_mode == 'image':
             budget = self.sample_settings['budget_per_round']
@@ -232,19 +226,17 @@ class ActiveLearningRunner(BaseRunner):
             active_set (ActiveLearningDataset): dataset instance to be labelled.
         """
         assert dataset_type in ['query', 'train']
+        
         if dataset_type == 'train': # avoid printing more than once
             self.logger.info(f"sample mode: {self.sample_mode}")
+
         if self.sample_mode == 'image':
-            if dataset_type == 'train':
-                active_set.label_randomly(sample_settings['initial_pool'])
-            else:
-                total_size = active_set.num_labelled + active_set.num_unlabelled
-                active_set.label_randomly(n=total_size)
+            assert dataset_type == 'train'
+            active_set.label_randomly(sample_settings['initial_pool'])
             self.logger.info(
                 f"ActiveLearningDataset created | {dataset_type} | initial pool = {sample_settings['initial_pool']}.")
         elif self.sample_mode == 'pixel':
             active_set.label_all_with_mask(mask_shape=self.mask_size, mask_type=dataset_type)
-            
         else:
             raise ValueError(
                 "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
@@ -318,6 +310,7 @@ class ActiveLearningRunner(BaseRunner):
         # when user wants to sample regularly, duplicate the inner-workflow tuples
         workflow = utils.process_workflow(workflow, self.sample_rounds)
 
+        # raise ValueError('debugger')
         # main loops of train-query-val
         for sample_round, flow_per_round in enumerate(workflow):
 

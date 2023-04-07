@@ -2,10 +2,19 @@
 Miscellaneous helper functions
 """
 import argparse
-from typing import List, Tuple
-from mmcv.utils import DictAction
+import pickle
+import sys
 import os
+import os.path as osp
 import warnings
+from typing import Tuple
+
+import numpy as np
+import torch
+import mmcv
+from mmcv.runner import get_dist_info
+from mmcv.utils import DictAction
+from mmseg.utils import get_root_logger
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a segmentor')
@@ -92,3 +101,60 @@ def parse_args():
         args.cfg_options = args.options
 
     return args
+
+def create_pixel_masks(
+    save_path: str, dataset: torch.Tensor, mask_shape: Tuple[int, int], init_pixels: int):
+    
+    H, W = mask_shape
+    L = len(dataset)
+    rank, world = get_dist_info()
+    file_of_fnames = osp.join(save_path, '_filenames_.txt')
+
+    # only process the file names once (the first time)
+    if not osp.exists(file_of_fnames) or osp.getsize(file_of_fnames) == 0:
+        # assert world == 1, 'to generate the filenames for the first time, please use just 1 GPU (to be fixed)'
+        write_fname_in_file(fname=file_of_fnames, dataset=dataset)
+        # sys.exit("finished creating the mask filenames")
+
+    with open(file_of_fnames, 'r+') as file_of_fnames:
+        fnames = file_of_fnames.read().split(',\n')[:-1] # trim the last empty string
+        if rank == 0: prog_bar = mmcv.ProgressBar(task_num=L)
+
+        for fname in fnames:
+            truncated_fname = fname.split('.')
+            assert len(truncated_fname)==2, 'error during processing filenames for mask creation'
+            mask_fname = truncated_fname[0] # remove the meta-filename
+            full_mask_fname = osp.join(save_path, f'{mask_fname}.pkl')
+            mask = np.random.permutation(H * W).reshape(W, H) < init_pixels # reshape to (W, H) to be compatible with mmcv
+            if rank == 0:
+                with open(full_mask_fname, 'wb') as fs:
+                    pickle.dump(mask, fs)
+                    prog_bar.update()
+
+        newline_after_pbar(rank)
+
+    return True
+
+
+def write_fname_in_file(fname, dataset):
+    logger = get_root_logger()
+    logger.info(f"writing filenames into {fname} for mask creation (only the first time)")
+    L = len(dataset)
+    rank, _ = get_dist_info()
+    get_fname = lambda x: x['img_metas'].data['filename'].split('/')[-1]
+    file = open(fname, 'w+') 
+
+    if rank==0: prog_bar = mmcv.ProgressBar(task_num=L)
+
+    for i in range(L):
+        name = get_fname(dataset[i])
+        file.write(f"{name},\n")
+        if rank == 0:
+            prog_bar.update()
+
+    file.close()
+
+
+def newline_after_pbar(rank):
+    """print a newline after the progress bar"""
+    if rank == 0: print("\n")

@@ -1,5 +1,6 @@
 # Edits during baseline development
 reconstructed_images*/
+visualizations/
 viz*/
 queries_save_dir/
 pretrained_ckpts/

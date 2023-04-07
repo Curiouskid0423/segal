@@ -51,7 +51,7 @@ class MaskDecodeHead(BaseDecodeHead):
         self.save_mae_iter = (2975 // 8) * 2
 
         # MiT-based fusion decoder (to be completed)
-        self.use_vit = False
+        self.use_vit = True
         if self.use_vit:
             nh = 4 # num heads
             self.crop_size = 160 # crop size

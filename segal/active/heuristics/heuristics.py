@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from collections.abc import Sequence
 
-from .utils import to_prob, RIPU_Net, Sparsity_Net
+from .utils import to_prob, RIPU_Net
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),
@@ -235,34 +235,34 @@ class RegionImpurity(AbstractHeuristic):
         scores = self.ripu_net(softmax_pred, use_entropy=self.use_entropy) # should be (b, h, w)
         return scores
 
-class Sparsity(AbstractHeuristic):
-    """
-    Sparsity Score to encourage entropy to spread out
-    """
+# class Sparsity(AbstractHeuristic):
+#     """
+#     Sparsity Score to encourage entropy to spread out
+#     """
 
-    def __init__(self, mode, shuffle_prop=0, k=1, alpha=1.8, inflection=0.5,reverse=True):
+#     def __init__(self, mode, shuffle_prop=0, k=1, alpha=1.8, inflection=0.5,reverse=True):
 
-        # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
-        super().__init__(shuffle_prop, reverse)
-        assert mode == 'pixel'
-        self.mode = mode
-        self.sparsity_net = Sparsity_Net(
-            size=2*k+1, 
-            alpha=alpha,            # sigmoid softness
-            inflection=inflection   # inflection point
-        ).cuda()
+#         # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
+#         super().__init__(shuffle_prop, reverse)
+#         assert mode == 'pixel'
+#         self.mode = mode
+#         self.sparsity_net = Sparsity_Net(
+#             size=2*k+1, 
+#             alpha=alpha,            # sigmoid softness
+#             inflection=inflection   # inflection point
+#         ).cuda()
 
     
-    def compute_score(self, predictions, mask):
-        """
-        Args:
-            prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
-            mask (Tensor): boolean mask (size of [b, 1, h, w])
+#     def compute_score(self, predictions, mask):
+#         """
+#         Args:
+#             prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
+#             mask (Tensor): boolean mask (size of [b, 1, h, w])
         
-        Return:
-            uncertainty (sparsity score) (Tensor): uncertainty score map of size [b, h, w]
-        """
+#         Return:
+#             uncertainty (sparsity score) (Tensor): uncertainty score map of size [b, h, w]
+#         """
         
-        softmax_pred = to_prob(predictions) # [B, C, H, W]
-        scores = self.sparsity_net(softmax_pred, mask)
-        return scores
+#         softmax_pred = to_prob(predictions) # [B, C, H, W]
+#         scores = self.sparsity_net(softmax_pred, mask)
+#         return scores

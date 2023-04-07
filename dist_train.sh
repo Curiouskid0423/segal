@@ -5,7 +5,7 @@ NODE_RANK=${NODE_RANK:-0}
 PORT=${PORT:-29500}
 MASTER_ADDR=${MASTER_ADDR:-"127.0.0.1"}
 
-CUDA_VISIBLE_DEVICES=2,3,4,5,6,7,8,9 \
+# CUDA_VISIBLE_DEVICES=8,9 \
 PYTHONPATH="$(dirname $0)/..":$PYTHONPATH \
 python -m torch.distributed.launch \
     --nnodes=$NNODES \
@@ -15,5 +15,6 @@ python -m torch.distributed.launch \
     --master_port=$PORT \
     $(dirname "$0")/segal/train_active_learning.py \
     $CONFIG \
-    --seed 0 \
+    --seed 123 \
+    --deterministic \
     --launcher pytorch ${@:3} 

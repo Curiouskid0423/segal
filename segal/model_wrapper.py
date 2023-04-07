@@ -2,11 +2,9 @@
 ModelWrapper to contain an instance attribute of 
 type torch.nn.Module that MMSeg can work on. 
 """
-from collections.abc import Sequence
 from functools import reduce
 
 import numpy as np
-import pickle
 import torch
 from torch.utils.data import Dataset
 import mmcv
@@ -17,6 +15,7 @@ from mmseg.models import EncoderDecoder
 from segal.active.dataset.active_dataset import ActiveLearningDataset
 from segal.active.heuristics import AbstractHeuristic
 from segal.utils.sampling import collect_results_gpu, batch_preprocess
+from segal.utils.misc import newline_after_pbar
 
 class ModelWrapper:
     """
@@ -53,7 +52,7 @@ class ModelWrapper:
         return sample_evenly
 
     def predict_on_dataset(
-            self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
+        self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
         """
         Make predictions on the unlabelled pool during the sampling phase.
         Image sampling mode:
@@ -63,7 +62,7 @@ class ModelWrapper:
             returns a h*w boolean map per image, representing new pixels to be labelled.
         """
         self.eval()
-        model: EncoderDecoder = self.backbone.module
+        model: EncoderDecoder = self.backbone.module #.cuda()
         self.query_dataset_size = len(dataset)
         
         assert self.sample_mode == 'image' or isinstance(dataset, ActiveLearningDataset)
@@ -83,31 +82,30 @@ class ModelWrapper:
 
         results = []
         rank, world_size = get_dist_info()
-        if rank == 0:
-            prog_bar = mmcv.ProgressBar(len(dataset))
+        # mask_filenames = []
 
+        self.logger.info(f"computing uncertainty scores...")
+        if rank == 0: pbar = mmcv.ProgressBar(len(dataset))
         for idx, data_batch in enumerate(test_loader):
-
-            if self.sample_mode == 'pixel':
-                data_batch, mask = data_batch
 
             with torch.no_grad():
                 ext_img, ext_img_meta = batch_preprocess(data_batch)
                 logits = model.whole_inference(ext_img, ext_img_meta, rescale=False)
-                scores = heuristic.get_uncertainties(
-                    logits, 
-                    mask = None if self.sample_mode == 'image' else mask
-                )
+                scores = heuristic.get_uncertainties(logits)
                 
                 # Cannot store the entire pixel-level map due to memory shortage.
                 if self.sample_mode == 'pixel':
-                    for i, score in enumerate(scores):
-                        score[mask[i].numpy()] = -1.0  # Mask labeled pixels (0 is the lowest uncertainty value)
-                        if sample_evenly:
-                            new_query = self.extract_query_indices(uc_map=score)
-                            results.append(new_query)
-                        else:
-                            results.append(score)
+                    assert len(scores) == 1, "batch size not one for query dataloader"
+                    score = scores[0]
+                    mask = data_batch['mask'][0].numpy()
+                    # mask_filenames.append(data_batch['mask_filename'][0])
+                    score[mask] = -1.0  # Mask labeled pixels (0 is the lowest uncertainty value)
+                    if sample_evenly:
+                        new_query = self.extract_query_indices(uc_map=score)
+                        results.append(new_query)
+                    else:
+                        results.append(score)
+
                 elif self.sample_mode == 'image':
                     results.extend(scores)
                 else:
@@ -117,13 +115,16 @@ class ModelWrapper:
             if rank == 0:
                 completed = logits.size()[0] * world_size
                 for _ in range(completed):
-                    prog_bar.update()
+                    pbar.update()
+                    
+        newline_after_pbar(rank)
 
         if hasattr(self.sample_settings, 'sample_evenly') and not sample_evenly:
             results = self.extract_query_indices(np.array(results), sample_evenly=False)
 
         # collect results from all devices (GPU)
         results = np.array(results, dtype=bool)
+        # all_results = results # debug
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
 
@@ -162,10 +163,10 @@ class ModelWrapper:
         to address all 4 cases of `sample_threshold` and `sample_evenly=[True, False]`
         """
         # scores = self.region_scorer() # keep grad 
-        pass
+        raise NotImplementedError()
 
     def get_pixels_by_budget(
-        self, budget: int, uc_map: torch.Tensor, sample_evenly: bool, unit='pixel'):
+        self, budget: int, uc_map: torch.Tensor, sample_evenly: bool, mode='pixel'):
         """
         The method is for pixel-based sampling (not image-based).
 
@@ -191,14 +192,16 @@ class ModelWrapper:
                 selection_pool = budget
 
         # define indices
-        if unit == 'region':
+        if mode == 'region':
             indices = self.get_regions(selection_pool, uc_map)
         else:
             indices = self.get_indices(selection_pool, uc_map)
 
         if top_k_percent != None:  # sample_threshold=True
             if sample_evenly:
-                query_size = budget // unit
+                query_size = budget // self.query_dataset_size
+                if query_size == 0:
+                    self.logger.warning("query_size is zero. check if the budget_per_round is correct.")
                 indices = np.random.choice(indices, size=query_size, replace=False)
             else:
                 assert len(indices) >= budget

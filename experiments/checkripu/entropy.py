@@ -4,7 +4,6 @@ DATA_FILE = f'{BASE}dataset/cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}../configs/_base_/models/deeplabv3plus_r50-d8.py'
 SPG = 2 # Sample per GPU
-GPU = 2
 """ active learning configs """
 QUERY_EPOCH = 1
 BUDGET = int(256*512*0.01) * 2975
@@ -20,7 +19,7 @@ custom_imports = dict(
 
 model = dict(pretrained='open-mmlab://resnet101_v1c', backbone=dict(depth=101))
 load_from = 'experiments/gtav_ckpt_deeplabv3+r101.pth'
-data = dict( samples_per_gpu=SPG, workers_per_gpu=1 ) 
+data = dict( samples_per_gpu=SPG, workers_per_gpu=4 ) 
 
 # mixed precision
 fp16 = dict(loss_scale='dynamic')
@@ -44,7 +43,7 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="viz_checkripu_entropy"
+        dir="visualizations/viz_entropy"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
@@ -65,7 +64,7 @@ optimizer_config = dict()
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=False)
 
 log_config = dict(
-    interval=100,
+    interval=20,
     hooks=[
         dict(type='TextLoggerHook'),
         # dict(
