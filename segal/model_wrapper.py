@@ -62,7 +62,7 @@ class ModelWrapper:
             returns a h*w boolean map per image, representing new pixels to be labelled.
         """
         self.eval()
-        model: EncoderDecoder = self.backbone.module #.cuda()
+        model: EncoderDecoder = self.backbone.module
         self.query_dataset_size = len(dataset)
         
         assert self.sample_mode == 'image' or isinstance(dataset, ActiveLearningDataset)

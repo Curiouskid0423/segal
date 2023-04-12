@@ -50,13 +50,8 @@ class RIPU_Net(nn.Module):
         
         # Modules for just region-impurity
         self.purity_conv = nn.Conv2d(
-            in_channels=channels, 
-            out_channels=channels, 
-            kernel_size=size,
-            stride=1, 
-            padding= size//2,
-            bias=False,
-            padding_mode=padding, 
+            in_channels=channels, out_channels=channels, kernel_size=size,
+            stride=1, padding= size//2, bias=False, padding_mode=padding, 
             groups=channels # each channel should have a separate filter
         ) # (batch, 19, 256, 512) -> (256, 512)
         weight = torch.ones((1, 1, size, size), dtype=torch.float32) # (C_in, C_out, K, S)
@@ -105,48 +100,3 @@ class RIPU_Net(nn.Module):
                 score *= prediction_uncertainty
             scores.append( score.cpu().squeeze(dim=0).squeeze(dim=0).numpy() )
         return np.array(scores)
-        
-# class Sparsity_Net(nn.Module):
-
-#     def __init__(self, size, alpha, inflection) -> None:
-#         super(Sparsity_Net, self).__init__()
-#         self.size = size
-#         self.alpha = alpha
-#         self.inflection = inflection
-
-#         # use convolution to count the number of mask in each region
-#         self.mask_conv = nn.Conv2d(
-#             in_channels=1,
-#             out_channels=1,
-#             kernel_size=size,
-#             stride=1, 
-#             padding=size//2,
-#             padding_mode='zeros',
-#             bias=False,
-#         )
-#         self.sigmoid = nn.Sigmoid()
-#         weight = torch.ones((1, 1, size, size), dtype=torch.float32)
-#         self.mask_conv.weight = nn.Parameter(weight)
-#         self.mask_conv.requires_grad_(False)
-    
-#     def get_entropy(self, p, dim, keepdim):
-#         return torch.sum(-p * torch.log(p + 1e-6), dim=dim, keepdim=keepdim)
-
-#     def sparsity_factor(self, labelled_count):
-#         z = labelled_count - self.size**2 * self.inflection
-#         return torch.ones_like(z) - self.sigmoid(self.alpha * z)
-
-#     def forward(self, x: torch.Tensor, mask: torch.Tensor):
-#         """
-#         Args:
-#             x (Tensor):     softmax prediction (size of [b, c, h, w])
-#             mask (Tensor):  boolean mask (size of [b, 1, h, w])
-#         Return:
-#             final sparsity score (Tensor): uncertainty score map of size [b, h, w]
-#         """
-#         uncertainty = self.get_entropy(x, dim=1, keepdim=False) # [B, H, W]
-#         mask = mask.type(dtype=torch.float32)   # [B, H, W]
-#         mask_count = self.mask_conv(mask)       # [B, H, W]
-#         sparsity = self.sparsity_factor(mask_count)
-#         scores = sparsity * uncertainty
-#         return scores

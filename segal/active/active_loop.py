@@ -70,7 +70,7 @@ class ActiveLearningLoop:
             vis_length = configs.active_learning.visualize.size
             self.vis_path = osp.join(CWD, configs.active_learning.visualize.dir)
             os.makedirs(self.vis_path, exist_ok=True)
-            self.vis_indices = [np.random.randint(0, len(self.dataset)) for _ in range(vis_length)]
+            self.vis_indices = [np.random.randint(0, len(self.query_dataset)) for _ in range(vis_length)]
             self.round = 0
 
             self.visualize()
@@ -207,7 +207,6 @@ class ActiveLearningLoop:
             os.makedirs(epoch_vis_dir, exist_ok=True)
             self.logger.info("saving visualization...")
             for v in self.vis_indices:
-                # original image (256x512 for Cityscapes) and corresponding mask
                 ori, mask_filename = self.query_dataset.get_raw(v), self.get_mask_fname_by_idx(v)
                 with open(mask_filename, 'rb+') as fs:
                     mask = pickle.load(fs)

@@ -3,12 +3,11 @@ Miscellaneous helper functions
 """
 import argparse
 import pickle
-import sys
 import os
 import os.path as osp
 import warnings
 from typing import Tuple
-
+from glob import glob
 import numpy as np
 import torch
 import mmcv
@@ -102,42 +101,77 @@ def parse_args():
 
     return args
 
-def create_pixel_masks(
-    save_path: str, dataset: torch.Tensor, mask_shape: Tuple[int, int], init_pixels: int):
-    
-    H, W = mask_shape
-    L = len(dataset)
-    rank, world = get_dist_info()
-    file_of_fnames = osp.join(save_path, '_filenames_.txt')
+def helper(args):
+    """
+    Helper function to create and write masks to disk. Each worker (in 
+    multiprocessing) will process one masks's creation
+    """
+    fname, save_path, init_pixels, shape = args
+    H, W = shape
 
+    truncated_fname = fname.split('.')
+    assert len(truncated_fname)==2, 'error during processing filenames for mask creation'
+    mask_fname = truncated_fname[0] # remove the meta-filename
+    full_mask_fname = osp.join(save_path, f'{mask_fname}.pkl')
+    mask = np.random.permutation(H * W).reshape(W, H) < init_pixels # reshape to (W, H) to be compatible with mmcv
+    with open(full_mask_fname, 'wb') as fs:
+        pickle.dump(mask, fs)
+    
+def create_pixel_masks(
+    save_path: str, dataset: torch.Tensor, mask_shape: Tuple[int, int], 
+    mask_type:str, init_pixels: int, pattern: str = ""):
+    """
+    Create and initialize the pixel masks given the path for saving
+    Args:
+        save_path (str):    path name for saving the masks, which are numpy arrays
+        dataset (Tensor):   dataset object for accessing the img_metas
+        mask_shape (Tuple): the shape of the masks
+        init_pixels (int):  initially labeled pixels (e.g. 1310 for 1% of 256x512 image)
+        pattern (str):      regex string for efficiently writing all image names to a file by `glob`
+    """
+    LOGGER = get_root_logger()
+    rank, world = get_dist_info()
+    file_of_fnames = osp.join(save_path, f'_{mask_type}_filenames_.txt')
     # only process the file names once (the first time)
     if not osp.exists(file_of_fnames) or osp.getsize(file_of_fnames) == 0:
         # assert world == 1, 'to generate the filenames for the first time, please use just 1 GPU (to be fixed)'
-        write_fname_in_file(fname=file_of_fnames, dataset=dataset)
-        # sys.exit("finished creating the mask filenames")
-
+        if pattern == "":
+            write_fname_in_file(fname=file_of_fnames, dataset=dataset, logger=LOGGER)
+        else:
+            assert hasattr(dataset, 'img_dir')
+            write_in_file_with_suffix(fname=file_of_fnames, data_path=dataset.img_dir, pattern=pattern, logger=LOGGER)
+            
+    LOGGER.info(f"creating masks for `{mask_type}` dataset. start with {init_pixels} per image.")
+            
     with open(file_of_fnames, 'r+') as file_of_fnames:
         fnames = file_of_fnames.read().split(',\n')[:-1] # trim the last empty string
-        if rank == 0: prog_bar = mmcv.ProgressBar(task_num=L)
-
-        for fname in fnames:
-            truncated_fname = fname.split('.')
-            assert len(truncated_fname)==2, 'error during processing filenames for mask creation'
-            mask_fname = truncated_fname[0] # remove the meta-filename
-            full_mask_fname = osp.join(save_path, f'{mask_fname}.pkl')
-            mask = np.random.permutation(H * W).reshape(W, H) < init_pixels # reshape to (W, H) to be compatible with mmcv
-            if rank == 0:
-                with open(full_mask_fname, 'wb') as fs:
-                    pickle.dump(mask, fs)
-                    prog_bar.update()
-
-        newline_after_pbar(rank)
+        args = [(fname, save_path, init_pixels, mask_shape) for fname in fnames]
+        if rank == 0:
+            LOGGER.warning("using multiprocessing to create mask without file locks! " 
+                           + "please ensure that all filenames are distinct")
+            mmcv.track_parallel_progress(helper, args, nproc=8)
+            newline_after_pbar(rank)
 
     return True
 
+def write_in_file_with_suffix(fname, data_path, pattern, logger):
+    
+    logger.info(f"writing filenames into {fname} for mask creation (only the first time)")
+    rank, _ = get_dist_info()
+    data_name_list = glob(osp.join(data_path, '**', pattern), recursive=True)
 
-def write_fname_in_file(fname, dataset):
-    logger = get_root_logger()
+    file = open(fname, 'w+') 
+    if rank==0: prog_bar = mmcv.ProgressBar(task_num=len(data_name_list))
+    full_string = []
+    for data_name in data_name_list:
+        full_string.append(f"{osp.basename(data_name)},\n")
+        if rank == 0:
+            prog_bar.update()
+    file.write("".join(full_string))
+    file.close()
+    newline_after_pbar(rank)
+    
+def write_fname_in_file(fname, dataset, logger):
     logger.info(f"writing filenames into {fname} for mask creation (only the first time)")
     L = len(dataset)
     rank, _ = get_dist_info()
@@ -146,14 +180,15 @@ def write_fname_in_file(fname, dataset):
 
     if rank==0: prog_bar = mmcv.ProgressBar(task_num=L)
 
+    full_string = []
     for i in range(L):
-        name = get_fname(dataset[i])
-        file.write(f"{name},\n")
+        full_string.append(f"{get_fname(dataset[i])},\n")
         if rank == 0:
             prog_bar.update()
 
+    file.write("".join(full_string))
     file.close()
-
+    newline_after_pbar(rank)
 
 def newline_after_pbar(rank):
     """print a newline after the progress bar"""

@@ -57,7 +57,14 @@ def adjust_mask(mask: torch.Tensor, meta: List, scale=None):
     return mask
 
 def get_heuristics_by_config(config: Namespace, sample_mode: str):
-
+    """
+    Returns a Heuristics instance given a config namespace.
+    Args: 
+        config (Namespace): config file converted from dict to namespace
+        sample_mode (str):  sample_mode will either be 'pixel', 'image' or 'region'
+    Return:
+        a Heuristics instance
+    """
     if hasattr(config.active_learning, "heuristic_cfg"):
         hconfig = config.active_learning.heuristic_cfg
         if config.active_learning.heuristic == 'ripu':
@@ -76,6 +83,9 @@ def get_heuristics_by_config(config: Namespace, sample_mode: str):
     return heuristic
 
 def process_workflow(workflow: List, sample_rounds: int):
+    """
+    Preprocess workflow list to accomodate regular and irregular sampling.
+    """
     from segal.utils.train import is_nested_tuple
     # when sample regularly
     if not is_nested_tuple(workflow[0]):
@@ -129,13 +139,14 @@ def check_workflow_validity(flow_per_round):
         or (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
 
+    # if isinstance(flow_per_round[0], tuple):
+    #     wf = [m for m, _ in flow_per_round]
+    #     return (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
+    #         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
+    # else:
+    #     return flow_per_round[0] == 'train'
 
 def process_multitask_workflow(workflow: List[Tuple], rounds: int):
-
-    """
-    base_train_flow = (('train_mae', 1), ('train_seg', 4))
-    [ (base_train_flow, 2), ('query', 1) ]
-    """
     
     assert len(workflow) == 2, ("multi-task workflow currently only supports sample-regularly "\
         + "workflow with length of 2, ie. `train` and `query` where `train` is a tuple of tuple")

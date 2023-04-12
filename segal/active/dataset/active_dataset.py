@@ -52,34 +52,38 @@ class ActiveLearningDataset(OracleDataset):
         self.settings = getattr(configs.active_learning.settings, self.sample_mode)
         self.logger = get_root_logger()
 
-        # Initialize labelled pool to be empty
+        # initialize labelled pool to be empty
         if labelled is not None:
             self.labelled_map = labelled.astype(int)
         else:
             self.labelled_map = np.zeros(len(dataset), dtype=int)
         
-        # Each entry is a DataContainer class with {'img', 'img_metas', 'gt_semantic_seg'}
-        self.dataset = dataset 
+        # each entry is a DataContainer class with {'img', 'img_metas', 'gt_semantic_seg'}
+        self.dataset = dataset # same object reference, ActiveLearningDataset just a wrapper
         self.masks_dir = osp.join(configs.work_dir, 'masks')
         os.makedirs(self.masks_dir, exist_ok=True)
 
-        # Reset data augmentation for the unlabelled pool (test pipeline) (image-based sampling)
+        # reset data augmentation for the unlabelled pool (test pipeline) (image-based sampling)
         self.cfg_data = deepcopy(configs.data)
         if self.cfg_data is not None and self.sample_mode == 'image':
             self.logger.info("creating unlabelled pool dataset.")
             self.pool_dataset = build_dataset(self.cfg_data['train'])
        
         # check source-free or standard ADA
-        self.source_free = True
         if hasattr(configs, "source_free") and not configs.source_free:
             self.source_free = False
+        else:
+            self.source_free = True
 
         self.make_unlabelled = make_unlabelled
         self.can_label = self.check_can_label()
         
-        # Constructor of OracleDataset
+        # constructor of OracleDataset
         super().__init__(self.labelled_map, random_state, last_active_steps)
  
+        # make all images accessible from the getter function (FIXME: BAAL legacy, to be removed later)
+        if self.sample_mode == 'pixel':
+            self.label(index=list(range(len(self.dataset))))
 
     def __getitem__(self, index):
         # index should be relative to the currently available list of indices
@@ -131,9 +135,6 @@ class ActiveLearningDataset(OracleDataset):
         For pixel-based sampling, all images will be placed in labelled pool initially
         but only labelled sparsely on randomly selected ones. 
         """
-        # Make all images visible from the getter function by placing all images into labelled pool 
-        # (FIXME: legacy from BAAL, to be removed later)
-        self.label(list(range(len(self.dataset))))
 
         h, w = mask_shape
         N = len(self.dataset)
@@ -141,18 +142,27 @@ class ActiveLearningDataset(OracleDataset):
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
 
-        # create the pixel masks and save to self.masks_dir
-        assert mask_type in ['train', 'query']
 
-        if not self.source_free or mask_type == 'query':
-            keep_pixels = np.prod(mask_shape) if (self.source_free and mask_type=='train') else init_pixels
-            self.logger.info(f"creating masks for `{mask_type}` dataset. start with {keep_pixels} per image.")
-            create_pixel_masks(
-                save_path=self.masks_dir, 
-                dataset=self.dataset, 
-                mask_shape=mask_shape, 
-                init_pixels=keep_pixels
-            ) 
+        # create masks for (1) 'query' always (2) 'train' but only when running ADA setting
+        if self.source_free:
+            if mask_type == 'query':
+                create_pixel_masks(
+                    save_path=self.masks_dir, 
+                    dataset=self.dataset, 
+                    mask_shape=mask_shape,
+                    mask_type=mask_type, 
+                    init_pixels=keep_pixels
+                ) 
+        else:
+            assert mask_type in ['source', 'target']
+            keep_pixels = np.prod(mask_shape) if mask_type=='source' else init_pixels
+            
+            if hasattr(self.dataset, 'img_suffix'):
+                pattern = f"*{self.dataset.img_suffix}"
+                create_pixel_masks(
+                    self.masks_dir, self.dataset, mask_shape, mask_type, keep_pixels, pattern)
+            else:
+                create_pixel_masks(self.masks_dir, self.dataset, mask_shape, mask_type, keep_pixels)
 
     def label(self, index, value=None):
         """

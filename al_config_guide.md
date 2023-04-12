@@ -102,7 +102,7 @@ log_config = dict(
             (('train', 14),)
         ] 
         ```
-        In this example, there are 5 sample rounds (considering the `initial_pool`) and the total epochs is 30 but allocated heavily at the beginning and the end. 
+        In this example, there are 5 sample rounds (considering the `initial_pool`) and the total epochs is 30 but allocated heavily at the beginning and the end. Note that in the last round `(('train', 14),)`, that **LAST comma** is not omittable.
     
 - `runner`
     - `type`: Use the customized runner `ActiveLearningRunner` in Segal, which allows iteratively adding new labels into the dataloader.

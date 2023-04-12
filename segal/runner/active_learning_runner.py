@@ -46,34 +46,40 @@ class ActiveLearningRunner(BaseRunner):
             model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
     def init_active_variables(
-        self, dataset: ActiveLearningDataset, query_dataset: ActiveLearningDataset, settings: dict, cfg: Namespace):
+        self, datasets: Dict[str, ActiveLearningDataset], settings: dict, cfg: Namespace):
         """
         Helper function to initialize variables for active learning experiments such as 
         ModelWrapper and ActiveLearningLoop. Also updates self._max_iters to be accurate in display.
 
         Args:
-            dataset (ActiveLearningDataset):        Dataset with mutatable masks for training
-            query_dataset (ActiveLearningDataset):  Dataset with mutatable masks for query
-                                                    (Query pipeline transformations)
+            datasets (Dict[ActiveLearningDataset])  A dict of dataset including 'train', 'query' and optionally 'source'
             settings (dict):                        Dictionary for sampling settings as specified in config file
             cfg (Namespace):                        Full config object for downstream method uses later.
         """
-        
-        self.dataset = dataset
-        self.query_dataset = query_dataset
+
+        self.dataset = datasets['train']
+        self.query_dataset = datasets.get('query', None) 
         self.wrapper = ModelWrapper(self.model, cfg)
-
-        if self.sample_mode != 'image':
+        
+        # check source-free or standard ADA
+        if hasattr(self.configs, "source_free") and not self.configs.source_free:
+            self.logger.info("using Active Domain Adaptation setting (not source free)")
+            
+        if self.sample_mode == 'image':
+            self.get_initial_labels(settings, self.dataset)
+        elif self.sample_mode == 'pixel':
             self.mask_size = cfg.scale_size
-            self.get_initial_labels(settings, query_dataset, dataset_type='query')
-            # Train and Query dataset masks have to be consistent
-            # dataset.masks = deepcopy(query_dataset.masks)
-
-        self.get_initial_labels(settings, dataset)
+            if self.configs.source_free:
+                self.get_initial_labels(settings, datasets['train'], dataset_type='train')
+                self.get_initial_labels(settings, self.query_dataset, dataset_type='query')
+            else:
+                self.get_initial_labels(settings, datasets['source'], dataset_type='source')
+                self.get_initial_labels(settings, datasets['target'], dataset_type='target')
+            
     
         self.active_learning_loop = ActiveLearningLoop(
-            dataset = dataset, 
-            query_dataset= query_dataset,
+            dataset = self.dataset, 
+            query_dataset= self.query_dataset,
             get_probabilities = self.wrapper.predict_on_dataset, 
             heuristic = utils.get_heuristics_by_config(cfg, self.sample_mode),
             configs = cfg,
@@ -81,7 +87,7 @@ class ActiveLearningRunner(BaseRunner):
         )
 
         self._max_iters = utils.get_max_iters(
-            cfg, self.max_epochs, self.sample_mode, dataset_size=len(dataset))
+            cfg, self.max_epochs, self.sample_mode, dataset_size=len(self.dataset))
         self.logger.info(f"max iters: {self.max_iters} | max epochs: {self.max_epochs}")
 
     def run_iter(self, data_batch, train_mode, **kwargs):
@@ -129,7 +135,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, data_batch in enumerate(self.data_loader):
             # utils.pixel_mask_check(
             #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
-            # if i > 80: break # debug
+            if i > 20: break # debug
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -225,13 +231,10 @@ class ActiveLearningRunner(BaseRunner):
             sample_settings (dict):             a dict of settings for the specified sample_mode, specified in config file.
             active_set (ActiveLearningDataset): dataset instance to be labelled.
         """
-        assert dataset_type in ['query', 'train']
+        assert dataset_type in ['query', 'train', 'source', 'target']
         
-        if dataset_type == 'train': # avoid printing more than once
-            self.logger.info(f"sample mode: {self.sample_mode}")
-
         if self.sample_mode == 'image':
-            assert dataset_type == 'train'
+            assert dataset_type == 'train', 'there should only be `train_set` at image-based sampling'
             active_set.label_randomly(sample_settings['initial_pool'])
             self.logger.info(
                 f"ActiveLearningDataset created | {dataset_type} | initial pool = {sample_settings['initial_pool']}.")
@@ -269,8 +272,7 @@ class ActiveLearningRunner(BaseRunner):
             "Please provide a training set in the list of `workflow`."
 
         self.init_active_variables(
-            dataset = datasets['train'], 
-            query_dataset = None if self.sample_mode=='image' else datasets['query'], 
+            datasets=datasets,
             settings=self.sample_settings, 
             cfg=configs
         )
@@ -310,15 +312,14 @@ class ActiveLearningRunner(BaseRunner):
         # when user wants to sample regularly, duplicate the inner-workflow tuples
         workflow = utils.process_workflow(workflow, self.sample_rounds)
 
-        # raise ValueError('debugger')
         # main loops of train-query-val
         for sample_round, flow_per_round in enumerate(workflow):
 
-            self.logger.info(f"Active Learning sample round {sample_round+1}.")
-            reset_toggle = hasattr(self.cfg_al, "reset_each_round") and self.cfg_al.reset_each_round
+            self.logger.info(f"active learning sample round {sample_round+1}.")
 
             # reset learning rate
-            if sample_round > 0 and reset_toggle:
+            reset_toggle = hasattr(self.cfg_al, "reset_each_round") and self.cfg_al.reset_each_round
+            if reset_toggle:
                 self._epoch, self._iter = 0, 0
                 for m, e in flow_per_round:
                     if m == 'train':
@@ -326,6 +327,8 @@ class ActiveLearningRunner(BaseRunner):
                         self._max_iters = utils.get_max_iters(
                             configs, e, self.sample_mode, dataset_size=len(datasets['train']))
                 self.logger.info("Re-initialized learning rate (lr) after sampling.")
+                self.logger.warning("WandB dashboard display does not sync when reset_each_round=True " 
+                                    + "(text log and the training system itself works fine)")
 
             assert utils.check_workflow_validity(flow_per_round)
 
@@ -337,7 +340,7 @@ class ActiveLearningRunner(BaseRunner):
                 # compute dataset_size for current `mode` for logging purpose
                 dataset_size = len(ds) if not (self.sample_mode=='image' and mode=='query') else len(ds.pool)
 
-                self.logger.info(f"sample round {sample_round} | {mode} | total epochs {epochs} | dataset size: {dataset_size}")
+                self.logger.info(f"sample round {sample_round+1} | {mode} | total epochs {epochs} | dataset size: {dataset_size}")
                 if isinstance(mode, str):  
                     if not hasattr(self, mode):
                         raise ValueError(f'runner has no method named "{mode}" to run an epoch')
@@ -348,13 +351,41 @@ class ActiveLearningRunner(BaseRunner):
                 # `new_loader` is NOT used in `query` but only in [`train`, `val`]
                 samples_gpu, workers_gpu =  configs.data.samples_per_gpu, configs.data.workers_per_gpu
                 num_gpu = len(configs.gpu_ids)
+
+                # initiate a new dataloader if new data
+                """
+                - Standard AL
+                    - train_set == query_set
+
+                - Active Domain Adaptation (ADA)
+                    ##
+                    train_set initially is 20,000 + 2975 images by ConcatDataset
+                    if target_set_has_label:
+                        pass through everything as normal
+                    else:
+                        skip target set during indicing
+                    - at query time, do the same thing as before :: query_set gets uncertanity score for labeling
+                    - eval at target set only
+                    ##
+                    - train_set: 20,000 images, 100% labeled
+                    - query_set: 2975 images, initially no label
+                    - each epoch ::
+                        - when start, train_set should "union" with the query_set for images newly labelled > 0% (ie. "newly_labeled_set")
+                        - when query, track the images that went from 0% labeled to partially labelled. these "newly_labeled_set" will be added to train_set in the next iteration. images will never be removed from the query set
+
+                - Source-free ADA
+                    - Standard AL initialized with source-pretrained weights
+
+                - Continuous Active Learning (CAL)
+                    ## Standard AL with increasing image size ##
+                     
+                """
                 new_loader = build_dataloader(
                     ds, samples_gpu, workers_gpu, num_gpu,
                     dist = True if len(configs.gpu_ids) > 1 else False,
-                    seed = configs.seed, drop_last = True, 
-                    # pin_memory = False
+                    seed = configs.seed, drop_last = True
                 ) 
-
+                
                 for _ in range(epochs):
                     epoch_runner(new_loader, **kwargs)
                 

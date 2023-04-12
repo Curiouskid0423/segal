@@ -37,14 +37,15 @@ from segal.hooks import *
 from segal.transforms import * 
 from segal.losses import *
 from segal.method import *
+from segal.dataset_wrapper import ConcatDataset
 
-def preprocess_datasets(config: Namespace, logger: Logger = None) -> Dict[str, Dataset]:
+def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]:
 
     datasets = {}
     
     if config.runner.type == 'ActiveLearningRunner':
         if is_nested_tuple(config.workflow[0]):
-            assert len(config.workflow) == config.runner.sample_rounds, \
+            assert len(config.workflow) == config.runner.sample_rounds+1, \
                 "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
     
         flow = flatten(config.workflow)
@@ -58,21 +59,28 @@ def preprocess_datasets(config: Namespace, logger: Logger = None) -> Dict[str, D
         
     for mode, _ in flow:
         data_cfg = getattr(config.data, mode)
-
-        assert isinstance(data_cfg.pipeline, list)
-
         # no need to independently create a `query` dataset in `image-sampling`
         if mode == 'query' and config.runner.sample_mode == 'image':
             continue
         # make sure to use train pipeline cuz test pipeline does not load ground truth
         if mode == 'val':
-            data_cfg = copy.deepcopy(data_cfg)
+            assert isinstance(data_cfg.pipeline, list)
             data_cfg.pipeline = config.data.train.pipeline
         # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
         if not (mode in datasets.keys()):
-            if logger != None:
-                logger.info(f'Loading `{mode}` set...')
-            datasets[mode] = build_dataset(data_cfg, dict(test_mode=False if mode=='train' else True))
+            logger.info(f'Loading `{mode}` set...')
+            if not config.source_free and mode=='train':
+                assert isinstance(data_cfg, list) and len(data_cfg)==2
+                source, target = data_cfg
+                datasets['source'] = build_dataset(source, dict(test_mode=False))
+                datasets['target'] = build_dataset(target, dict(test_mode=False))
+                datasets['train'] = ConcatDataset([datasets['source'], datasets['target']], separate_eval=False)
+            else:
+                assert isinstance(data_cfg.pipeline, list)
+                datasets[mode] = build_dataset(data_cfg, dict(test_mode=False if mode=='train' else True))
+    
+    LT, LQ = len(datasets['train']), len(datasets['query'])
+    logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")
 
     return datasets
 
@@ -132,6 +140,11 @@ def main():
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
+
+    # check mask dir name is accurate
+    if hasattr(cfg, 'mask_dir'):
+        mask_abspath = osp.abspath(osp.join(cfg.mask_dir, os.pardir))
+        assert osp.samefile(mask_abspath, cfg.work_dir), "mask folder has to be within the work_dir"
     
     # dump config
     cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))

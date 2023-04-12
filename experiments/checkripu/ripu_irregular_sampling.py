@@ -1,14 +1,17 @@
-""" mmcv base configs """
+# training configs
+QUERY_EPOCH = 10
+SPG = 2 # Sample per GPU
+SAMPLE_ROUNDS = 5
+# budget configs
+DATASET_LEN = 2975
+PIXEL_PER_IMG = int(256*512*0.01)
+BUDGET = PIXEL_PER_IMG * DATASET_LEN # int(256*512*0.01) * 2975
+# path configs
 BASE = '../' 
 DATA_FILE = f'{BASE}dataset/cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}../configs/_base_/models/deeplabv3plus_r50-d8.py'
-SPG = 1 # Sample per GPU
-GPU = 8
-""" active learning configs """
-QUERY_EPOCH = 10
-BUDGET = int(256*512*0.01) * 2975
-SAMPLE_ROUNDS = 5
+# miscell configs
 HEURISTIC = "ripu"
 VIZ_SIZE = 20
 

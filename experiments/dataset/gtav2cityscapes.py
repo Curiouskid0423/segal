@@ -1,17 +1,19 @@
 """
 config file for gtav -> cityscapes on deeplabv3+_resnet101
 """
-# NOTE: Using mini GTAV (only 2000 images) for faster iteration
-source_free = False
-gtav_root = '/shared/yutengli/data/gtav/mini/'
+# NOTE: Using mini GTAV (2000 images) for faster iteration
+gtav_root = '/shared/yutengli/data/gtav/mini/' 
+# gtav_root = '/shared/yutengli/data/gtav/'
 cs_root = '/shared/yutengli/data/cityscapes/'
 META_KEYS = (
     'filename', 'mask_filename', 'ori_filename', 
     'ori_shape','img_shape', 'pad_shape', 
     'scale_factor', 'img_norm_cfg')
 mask_dir = './work_dirs/ada/masks'
-scale_size = (512, 256) # (width, height) by mmcv convention
-crop_size =(200, 200)
+scale_size = (1280, 640)     # (width, height) by mmcv convention
+# scale_size = (512, 256)   # (width, height) by mmcv convention
+crop_size =(512, 512)
+source_free = False
 
 # dataset settings
 img_norm_cfg = dict(
@@ -61,12 +63,16 @@ test_pipeline = [
 data = dict(
     samples_per_gpu=2,
     workers_per_gpu=2,
-    train=dict(
-        type='GTAVDataset',
-        data_root=gtav_root,
-        img_dir='images',
-        ann_dir='labels',
-        pipeline=train_pipeline),   # train on GTAV
+    train=[
+        dict(
+            type='GTAVDataset', data_root=gtav_root,
+            img_dir='images', ann_dir='labels',
+            pipeline=train_pipeline),
+        dict(
+            type='CityscapesDataset', data_root=cs_root,
+            img_dir='leftImg8bit/train', ann_dir='gtFine/train',
+            pipeline=train_pipeline)
+        ],
     query=dict(
         type='CityscapesDataset',
         data_root=cs_root,
@@ -84,4 +90,4 @@ data = dict(
         data_root=cs_root,
         img_dir='leftImg8bit/val',
         ann_dir='gtFine/val',
-        pipeline=test_pipeline))    # validate on CS
+        pipeline=test_pipeline))    # test on CS
