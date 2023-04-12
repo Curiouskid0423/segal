@@ -119,10 +119,10 @@ def get_random_crops(image, crop_size, num=4):
     return results
 
 
-def save_reconstructed_images(
-    path, ori: torch.Tensor, rec: torch.Tensor, img_metas: List[Dict], num_samples=8):
+def save_reconstructed_image(
+    path, ori: torch.Tensor, rec: torch.Tensor, img_metas: List[Dict], index: int):
     
-    assert len(ori) == len(rec)
+    assert ori.shape == rec.shape
     _, _, H, W = ori.shape
     os.makedirs(name=path, exist_ok=True)
     norm_cfg = img_metas[0]['img_norm_cfg']
@@ -131,12 +131,10 @@ def save_reconstructed_images(
 
     unnormalize = lambda x: (x.cpu() * std + mean).type(torch.uint8)
 
-    iterations = min(len(ori), num_samples)
-    for i in range(iterations):
-        file_name = osp.join(path, f'sample{i}.jpg')
-        result = Image.new('RGB', (W*2, H))
-        result.paste(
-            im=tensor2image(unnormalize(ori[i])), box=(0,0))
-        result.paste(
-            im=tensor2image(unnormalize(rec[i])), box=(W, 0))
-        result.save(file_name)
+    file_name = osp.join(path, f'sample_{index}.jpg')
+    result = Image.new('RGB', (W*2, H))
+    result.paste(
+        im=tensor2image(unnormalize(ori)), box=(0,0))
+    result.paste(
+        im=tensor2image(unnormalize(rec)), box=(W, 0))
+    result.save(file_name)

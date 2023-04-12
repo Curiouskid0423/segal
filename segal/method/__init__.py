@@ -1,3 +1,3 @@
 from .mae_decoder import MaskDecodeHead
-from .model.main import TwinMixVisionTransformer
+from .model.shared_vit import SharedVisionTransformer
 from .segmentor import MultiTaskSegmentor

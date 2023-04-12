@@ -139,13 +139,6 @@ def check_workflow_validity(flow_per_round):
         or (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
 
-    # if isinstance(flow_per_round[0], tuple):
-    #     wf = [m for m, _ in flow_per_round]
-    #     return (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
-    #         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
-    # else:
-    #     return flow_per_round[0] == 'train'
-
 def process_multitask_workflow(workflow: List[Tuple], rounds: int):
     
     assert len(workflow) == 2, ("multi-task workflow currently only supports sample-regularly "\

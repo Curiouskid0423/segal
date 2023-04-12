@@ -22,7 +22,6 @@ custom_imports = dict(
 )
 
 model = dict(pretrained='open-mmlab://resnet101_v1c', backbone=dict(depth=101))
-load_from = 'experiments/gtav_ckpt_deeplabv3+r101.pth'
 data = dict( samples_per_gpu=SPG, workers_per_gpu=4 ) 
 
 # mixed precision

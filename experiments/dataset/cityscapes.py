@@ -5,12 +5,9 @@ META_KEYS = (
     'filename', 'mask_filename', 'ori_filename', 
     'ori_shape','img_shape', 'pad_shape', 
     'scale_factor', 'img_norm_cfg')
-# mask_dir = './work_dirs/entropy/masks'
-mask_dir = './work_dirs/reproduce/masks'
-scale_size = (512, 256) # (width, height) by mmcv convention
-# scale_size = (1024, 512) # (width, height) by mmcv convention
-crop_size =(200, 200)
-# crop_size =(384, 384)
+mask_dir = './work_dirs/dev_v2/masks'
+scale_size = (1024, 512) # (width, height) by mmcv convention
+crop_size =(384, 384)
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)

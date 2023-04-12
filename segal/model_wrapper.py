@@ -30,8 +30,8 @@ class ModelWrapper:
         self.backbone = model
         self.logger = get_root_logger()
         self.cfg = cfgs
-        assert cfgs.model.test_cfg.mode == 'whole', \
-            "ModelWrapper does not support `slide` query inference"
+        # assert cfgs.model.test_cfg.mode == 'whole', \
+        #     "ModelWrapper does not support `slide` query inference"
         self.sample_mode = cfgs.runner.sample_mode
         self.sample_settings = getattr(cfgs.active_learning.settings, self.sample_mode)
         self.gpu_ids = cfgs.gpu_ids
@@ -124,7 +124,6 @@ class ModelWrapper:
 
         # collect results from all devices (GPU)
         results = np.array(results, dtype=bool)
-        # all_results = results # debug
         all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
         all_results = np.array(all_results)
 

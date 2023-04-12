@@ -42,8 +42,9 @@ from segal.dataset_wrapper import ConcatDataset
 def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]:
 
     datasets = {}
-    
-    if config.runner.type == 'ActiveLearningRunner':
+    is_active_learning =  config.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']
+    # preprocess workflow
+    if is_active_learning:
         if is_nested_tuple(config.workflow[0]):
             assert len(config.workflow) == config.runner.sample_rounds+1, \
                 "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
@@ -52,11 +53,10 @@ def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]
 
         assert all([mode in ['train', 'val', 'query'] for (mode, _) in flow]), \
             "workflow has to be either train, val, or query"
-    elif config.runner.type == 'MultiTaskActiveRunner':
-        flow = [('train', None), ('query', None)] # placeholder to signal instantiation of the two datasets
     else:
         flow = config.workflow
-        
+
+    # iterate pass the workflow
     for mode, _ in flow:
         data_cfg = getattr(config.data, mode)
         # no need to independently create a `query` dataset in `image-sampling`
@@ -72,15 +72,18 @@ def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]
             if not config.source_free and mode=='train':
                 assert isinstance(data_cfg, list) and len(data_cfg)==2
                 source, target = data_cfg
-                datasets['source'] = build_dataset(source, dict(test_mode=False))
-                datasets['target'] = build_dataset(target, dict(test_mode=False))
-                datasets['train'] = ConcatDataset([datasets['source'], datasets['target']], separate_eval=False)
+                source_set = build_dataset(source, dict(test_mode=False))
+                target_set = build_dataset(target, dict(test_mode=False))
+                if is_active_learning:
+                    datasets['source'], datasets['target'] = source_set, target_set
+                datasets['train'] = ConcatDataset([source_set, target_set], separate_eval=False)
             else:
                 assert isinstance(data_cfg.pipeline, list)
                 datasets[mode] = build_dataset(data_cfg, dict(test_mode=False if mode=='train' else True))
     
-    LT, LQ = len(datasets['train']), len(datasets['query'])
-    logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")
+    if is_active_learning:
+        LT, LQ = len(datasets['train']), len(datasets['query'])
+        logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")
 
     return datasets
 

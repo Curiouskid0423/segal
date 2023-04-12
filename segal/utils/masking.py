@@ -14,7 +14,7 @@ def index_sequence(x: torch.Tensor, ids):
         ids = ids.unsqueeze(-1).expand(-1, -1, x.shape[-1])
     return torch.take_along_dim(x, ids, dim=1)
 
-def random_masking(x, keep_length, ids_shuffle):
+def random_masking(x, keep_length, ids_shuffle, channels=3):
     """Apply random masking on input tensor
     Args:
         x: input patches (batch x length x feature)
@@ -29,15 +29,10 @@ def random_masking(x, keep_length, ids_shuffle):
             part of x, concatentate them together and index it with ids_restore,
             we should get x back.
     """
-    batch, channels, length, feature_size = x.size()
-    inputs = einops.rearrange(x, 'b c l f -> b l (f c)')
-    shuffled = index_sequence(inputs, ids_shuffle)
-    shuffled = einops.rearrange(shuffled, 
-        pattern='b l (f c) -> b c l f',
-        f=feature_size, c=channels
-    ) # (8, 3, 64*64, 16)
-
-    kept = shuffled[:, :, :keep_length, :]
+    batch, length, feature_size = x.size()
+    shuffled = index_sequence(x, ids_shuffle)
+    
+    kept = shuffled[:, :keep_length, :]
     ids_restore = torch.empty_like(ids_shuffle)
     for idx, row in enumerate(ids_shuffle):
         ids_restore[idx] = torch.argsort(row)
@@ -71,7 +66,7 @@ def patchify(images: torch.Tensor, patch_size: int = 4):
             (height / patch_size) * (width / patch_size), 
             channels * patch_size * patch_size)
     """
-    pattern = 'b c (h ph) (w pw) -> b c (h w) (ph pw)'
+    pattern = 'b c (h ph) (w pw) -> b (h w) (ph pw c)'
     return einops.rearrange(
         images, 
         pattern=pattern, 

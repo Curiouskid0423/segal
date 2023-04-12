@@ -1,18 +1,21 @@
 """
 Customized runner file for running MAE multitask active learning
 """
-
+import os
+import os.path as osp
 import numpy as np
 from torch.utils.data import Dataset
 import mmcv
 from mmcv.runner import get_host_info
 from mmcv.runner.builder import RUNNERS
+from mmcv.runner.dist_utils import master_only
 from mmseg.datasets import build_dataloader
 import time
 from typing import Dict
 from argparse import Namespace
 from segal.runner import utils
 from segal.runner import ActiveLearningRunner
+from segal.method.utils import save_reconstructed_image
 
 @RUNNERS.register_module()
 class MultiTaskActiveRunner(ActiveLearningRunner):
@@ -35,29 +38,6 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             max_iters, max_epochs, sample_mode, sample_rounds)
 
     def train(self, data_loader, **kwargs):
-        raise NotImplementedError(
-            "plain `train()` method is not supported in MultiTaskActiveRunner, " 
-            + "please specify the training mode")
-
-    def train_mae(self, data_loader, **kwargs):
-        self.model.train()
-        self.mode = 'train'
-        self.data_loader = data_loader
-        self.call_hook('before_train_epoch')
-        time.sleep(2)  # Prevent possible deadlock during epoch transition
-
-        for i, data_batch in enumerate(self.data_loader):
-            # no masking needed in MAE objective
-            self._inner_iter = i
-            self.call_hook('before_train_iter')
-            self.run_iter(data_batch, mode='train_mae', **kwargs)
-            self.call_hook('after_train_iter')
-            self._iter += 1
-
-        self.call_hook('after_train_epoch')
-        self._epoch += 1
-
-    def train_seg(self, data_loader, **kwargs):
         self.model.train()
         self.mode = 'train'
         self.data_loader = data_loader
@@ -71,7 +51,25 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
             self._inner_iter = i
             self.call_hook('before_train_iter')
-            self.run_iter(data_batch, mode='train_seg', **kwargs)
+            self.run_iter(data_batch, mode='train_multitask', **kwargs)
+            self.call_hook('after_train_iter')
+            self._iter += 1
+
+        self.call_hook('after_train_epoch')
+        self._epoch += 1
+
+    def train_mae(self, data_loader, **kwargs):
+        self.model.train()
+        self.mode = 'train'
+        self.data_loader = data_loader
+        self.call_hook('before_train_epoch')
+        time.sleep(2)  # Prevent possible deadlock during epoch transition
+
+        for i, data_batch in enumerate(self.data_loader):
+            # no masking needed in MAE objective
+            self._inner_iter = i
+            self.call_hook('before_train_iter')
+            self.run_iter(data_batch, mode='train_mae', **kwargs)
             self.call_hook('after_train_iter')
             self._iter += 1
 
@@ -92,18 +90,20 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         run an iteration of the given mode. `outputs` will be losses in both 
         train modes and the `val` mode.
         """
-        if mode.startswith('train'):
-            data_batch, mask = data_batch
-            mask = mask.detach() # masks do not need gradients
+        if mode.startswith('train') and self.sample_mode == 'pixel':
             ignore_index = self.cfg_al.settings.pixel.ignore_index
-            data_batch = utils.preprocess_data_and_mask(data_batch, mask, ignore_index)
+            data_batch = utils.preprocess_data_and_mask(data_batch, ignore_index)
 
+        # local variable to avoid runtime error in forward() by removing 'mask'
+        data = data_batch.copy()
+        data.pop('mask', None)
+        
         if mode == 'train_mae':
-            outputs = self.model.train_step(data_batch, 'mae', self.optimizer, **kwargs)
-        elif mode == 'train_seg':
-            outputs = self.model.train_step(data_batch, 'seg', self.optimizer, **kwargs)
+            outputs = self.model.train_step(data, 'mae', self.optimizer, **kwargs)
+        elif mode == 'train_multitask':
+            outputs = self.model.train_step(data, 'multitask', self.optimizer, **kwargs)
         else:
-            outputs = self.model.val_step(data_batch, self.optimizer, **kwargs)
+            outputs = self.model.val_step(data, self.optimizer, **kwargs)
 
         if not isinstance(outputs, dict):
             raise TypeError('model.train_step() and model.val_step() must return a dict')
@@ -111,6 +111,10 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             self.log_buffer.update(outputs['log_vars'], outputs['num_samples'])
 
         self.outputs = outputs
+
+        if self.iter % 20 == 0 and self.iter > 0:
+            self.visualize_mae(num_samples=8)
+
 
     def run_one_sample_round(self, flow_per_round, sample_round, datasets, **kwargs):
 
@@ -125,7 +129,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             ds = datasets['train'] if mode.startswith('train') else datasets[mode]
             # compute dataset_size for current `mode` for logging purpose
             dataset_size = len(ds) if not (self.sample_mode=='image' and mode=='query') else len(ds.pool)
-            self.logger.info(f"sample round {sample_round} | {mode} | epochs per round {epochs} | dataset size: {dataset_size}")
+            self.logger.info(f"sample round {sample_round+1} | {mode} | epochs per round {epochs} | dataset size: {dataset_size}")
             # get `epoch_runner`
             epoch_runner = getattr(self, mode)
 
@@ -177,17 +181,17 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         self.call_hook('before_run')
 
         # when user wants to sample regularly, duplicate the inner-workflow tuples
-        workflow = utils.process_multitask_workflow(workflow, self.sample_rounds)
+        workflow = utils.process_workflow(workflow, self.sample_rounds)
         if hasattr(configs, 'mae_warmup_epochs'):
             workflow = [[('train_mae', configs.mae_warmup_epochs)]] + workflow
-
+            
         # main loops of train-query-val
         for sample_round, flow_per_round in enumerate(workflow):
             self.logger.info(f"sample round: {sample_round}, flow: {flow_per_round}")
 
-            self.logger.info(f"Active Learning sample round {sample_round+1}.")
+            self.logger.info(f"active learning sample round {sample_round+1}.")
             reset_toggle = hasattr(self.cfg_al, "reset_each_round") and self.cfg_al.reset_each_round
-
+            
             # reset learning rate
             if sample_round > 0 and reset_toggle:
                 self._epoch, self._iter = 0, 0
@@ -197,9 +201,31 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
                         self._max_iters = utils.get_max_iters(
                             configs, e, self.sample_mode, dataset_size=len(datasets['train']))
                 self.logger.info("Re-initialized learning rate (lr) after sampling.")
+                self.logger.warning("WandB dashboard display does not sync when reset_each_round=True " 
+                                    + "(text log and the training system itself works fine)")
 
             self.run_one_sample_round(flow_per_round, sample_round, datasets, **kwargs)
 
         # Wait for some hooks like loggers to finish
         time.sleep(1)  
         self.call_hook('after_run')
+
+    @master_only
+    def visualize_mae(self, num_samples=8):
+
+        self.logger.info(f"saving MAE reconstructed images...")
+        vis_indices = [np.random.randint(0, len(self.query_dataset)) for _ in range(num_samples)]
+        cwd = os.getcwd()
+        save_path = osp.join(cwd, 'reconstructed_images', f'iter{self.iter}')
+            
+        for idx in vis_indices:
+            data = self.query_dataset.get_raw(idx)
+            img = data['img'].data.detach()
+            rec = self.model.module.mae_inference(img.cuda())
+
+            save_reconstructed_image(
+                path=save_path, 
+                ori=img, 
+                rec=rec.detach(),
+                img_metas=data['img_metas'])
+

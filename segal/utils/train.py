@@ -53,9 +53,9 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
             'please set `runner` in your config.', UserWarning)
             
     runner_cfg = copy.deepcopy(cfg.runner)
-
+    is_active_learning = runner_cfg.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']
     # set max_epochs in runner's config
-    if runner_cfg.type == 'ActiveLearningRunner':
+    if is_active_learning:
         if not is_nested_tuple(cfg.workflow[0]):
             # only consider the case where `reset_each_round = False`, in the case
             # where it is False, runner.run with modify max_epochs at each round
@@ -68,14 +68,8 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
         else:
             flow = flatten_nested_tuple_list(cfg.workflow)
             runner_cfg.max_epochs = sum([ep for mode, ep in flow if mode == 'train'])
-    elif runner_cfg.type == 'MultiTaskActiveRunner':
-        assert len(cfg.workflow) == 2, "MultiTaskActiveRunner only supports sample-regularly now"
-        train_flow, query_flow = cfg.workflow
-        assert query_flow[0] == 'query'
-        train_base_flow, repeat = train_flow
-        epochs_per_round = sum([num for el, num in train_base_flow]) * repeat
-        runner_cfg.max_epochs = epochs_per_round * runner_cfg.sample_rounds
-        if hasattr(cfg, 'mae_warmup_epochs'):
+        
+        if runner_cfg.type == 'MultiTaskActiveRunner' and hasattr(cfg, 'mae_warmup_epochs'):
             runner_cfg.max_epochs += cfg.mae_warmup_epochs
             
     runner = build_runner(
@@ -144,7 +138,7 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
     Add DataParallel wrapper around a model instance depending on whether
     using distributed training or not.
 
-    Args:
+    Args:c
         cfg (Namespace):        config file provided by user and processed with MMCV
         model (BaseSegmentor):  the segmentation backbone
         distributed (bool):     boolean to indicate whether to use distributed training
@@ -152,12 +146,12 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
     
     if distributed:
         
-        # NOTE: set `find_unused_parameters=True` in the case of multi-task training since
-        # inevitably some parameters in the separate projection heads will not be used
         if cfg.runner.type == 'MultiTaskActiveRunner':
             find_unused_parameters = True
         else:
             find_unused_parameters = cfg.get('find_unused_parameters', False)
+        
+        # find_unused_parameters = cfg.get('find_unused_parameters', False)
         
         # Sets the `find_unused_parameters` parameter in
         # torch.nn.parallel.DistributedDataParallel

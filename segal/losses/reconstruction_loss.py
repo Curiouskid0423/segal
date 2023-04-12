@@ -7,8 +7,9 @@ from mmseg.models.losses import weighted_loss
 @weighted_loss
 def rec_loss(pred, target, mask):
     assert pred.size() == target.size() and target.numel() > 0
-    loss = (pred - target) ** 2 * mask
-    return loss
+    loss = (pred - target) ** 2 
+    loss = loss.mean(-1)
+    return loss * mask
 
 @LOSSES.register_module
 class ReconstructionLoss(nn.Module):
@@ -33,6 +34,7 @@ class ReconstructionLoss(nn.Module):
         assert reduction_override in (None, 'none', 'mean', 'sum')
         reduction = (
             reduction_override if reduction_override else self.reduction)
-        loss = rec_loss(pred, target, reduction=reduction, mask=mask, avg_factor=mask.sum())
+        loss = rec_loss(
+            pred, target, reduction=reduction, mask=mask, avg_factor=mask.sum())
         loss = self.loss_weight * loss
         return loss

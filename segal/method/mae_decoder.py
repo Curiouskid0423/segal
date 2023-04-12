@@ -3,15 +3,17 @@ import os.path as osp
 import torch
 import torch.nn as nn
 import einops
-from mmcv.runner import force_fp32, get_dist_info, ModuleList
-from mmcv.cnn import ConvModule
+from mmcv.runner import force_fp32, ModuleList
+from mmcv.cnn import build_norm_layer
+from mmcv.cnn.utils.weight_init import (constant_init, trunc_normal_, trunc_normal_init)
+
 from mmseg.utils import get_root_logger
 from mmseg.models.builder import HEADS
 from mmseg.models.decode_heads.decode_head import BaseDecodeHead
+from mmseg.models.backbones.vit import TransformerEncoderLayer
 from mmseg.ops import resize
-from segal.method import utils
-from segal.method.mit_modules import TransformerEncoderLayer
-from segal.utils.masking import restore_masked
+
+from segal.utils.masking import restore_masked, patchify
 
 
 @HEADS.register_module()
@@ -25,87 +27,150 @@ class MaskDecodeHead(BaseDecodeHead):
     forward() will return reconstructed images.
     """
 
-    def __init__(self, interpolate_mode='bilinear', **kwargs):
+    def __init__(self, 
+                 in_channels,
+                 num_layers, 
+                 num_heads,
+                 img_size,
+                 patch_size,
+                 embed_dims=768,
+                 mlp_ratio=4,
+                 drop_path_rate=0.1,
+                 attn_drop_rate=0.0,
+                 drop_rate=0.0,
+                 qkv_bias=True,
+                 num_fcs=2,
+                 with_cp=False,
+                 norm_cfg=dict(type='LN'),
+                 act_cfg=dict(type='GELU'),
+                 interpolate_mode='bicubic',
+                 init_std=0.02,
+                 **kwargs):
         super(MaskDecodeHead, self).__init__(
-            input_transform='multiple_select', **kwargs)
+            in_channels=in_channels, **kwargs)
         
-        assert self.num_classes == 3, "Assuming the input is RGB, num_classes has to be 3 in MaskDecodeHead."
-        
+        assert self.num_classes == 3, \
+            "Assuming the input is RGB, num_classes has to be 3 in MaskDecodeHead."
+            
+        self.logger = get_root_logger()
+        self.img_size = img_size
+        self.patch_size = patch_size
         self.interpolate_mode = interpolate_mode
-        num_inputs = len(self.in_channels)
-        assert num_inputs == len(self.in_index)
-
-        self.convs = nn.ModuleList()
-        for i in range(num_inputs):
-            self.convs.append(
-                ConvModule(
-                    in_channels=self.in_channels[i],
-                    out_channels=self.channels,
-                    kernel_size=1,
-                    stride=1,
-                    norm_cfg=self.norm_cfg,
-                    act_cfg=self.act_cfg))
-
+        self.num_layers = num_layers
         self.save_results = True
-        self.curr_mae_iter = 0
-        self.save_mae_iter = (2975 // 8) * 2
 
-        # MiT-based fusion decoder (to be completed)
-        self.use_vit = True
-        if self.use_vit:
-            nh = 4 # num heads
-            self.crop_size = 160 # crop size
-            self.patch_size = 8
-            decoder_mlp_ratio = 4
-            attn_embed_dims = self.channels
-            self.transformer = TransformerEncoderLayer(
-                embed_dims=attn_embed_dims,
-                num_heads=nh,
-                feedforward_channels=attn_embed_dims*decoder_mlp_ratio,
-                drop_path_rate=0.1,
-                sr_ratio=1
-            ) # (batch, num_patch**2, embed_dims)
-            self.channel_compression = ConvModule(
-                in_channels=self.channels * num_inputs,
-                out_channels=self.channels,
-                kernel_size=1,
-                norm_cfg=self.norm_cfg)
-            self.decode_projection = nn.Linear(
-                attn_embed_dims,
-                self.patch_size*self.patch_size*self.num_classes, 
-                bias=True) 
-        else:
-            # CNN-based fusion decoder (16, 256*4, 120, 120)
-            self.fusion_decoder = ConvModule(
-                in_channels=self.channels,
-                out_channels=self.num_classes,
-                kernel_size=1,
-                norm_cfg=self.norm_cfg
-            )
+        dpr = [
+            x.item() for x in torch.linspace(0, drop_path_rate, num_layers)
+        ]  # stochastic depth decay rule
         
+        self.layers = ModuleList()
+        for i in range(num_layers):
+            self.layers.append(
+                TransformerEncoderLayer(
+                    embed_dims=embed_dims,
+                    num_heads=num_heads,
+                    feedforward_channels=mlp_ratio * embed_dims,
+                    attn_drop_rate=attn_drop_rate,
+                    drop_rate=drop_rate,
+                    drop_path_rate=dpr[i],
+                    num_fcs=num_fcs,
+                    qkv_bias=qkv_bias,
+                    act_cfg=act_cfg,
+                    norm_cfg=norm_cfg,
+                    with_cp=with_cp,
+                    batch_first=True))
         
+        self.projection = nn.Linear(in_channels, embed_dims)
+        self.decoder_norm = build_norm_layer(
+            norm_cfg, embed_dims, postfix=1)[1]
+        self.upsampler = nn.Linear(
+                embed_dims, patch_size*patch_size*self.num_classes, bias=True) 
+        
+        self.mask_tokens = nn.Parameter(torch.zeros(1, 1, embed_dims))
+        self.num_patches = \
+            (self.img_size[0] // self.patch_size) * (self.img_size[1] // self.patch_size)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dims))
+        self.drop_after_pos = nn.Dropout(p=drop_rate)
+        self.init_std = init_std
+        delattr(self, 'conv_seg')
+        
+    def init_weights(self):
+        # FIXME: double check if the init_weights is implemented correctly for pretraining
+        module_name = self.__class__.__name__
+        self.logger.info(f'initialize {module_name} with init_cfg {self.init_cfg}')
+            
+        trunc_normal_init(self.projection, std=self.init_std)
+        trunc_normal_init(self.upsampler, std=self.init_std)
+        for n, m in self.named_modules():
+            if isinstance(m, nn.Linear):
+                trunc_normal_init(m, std=self.init_std, bias=0)
+            elif isinstance(m, nn.LayerNorm):
+                constant_init(m, val=1.0, bias=0.0)
+
+    def _pos_embedding(self, patched_img, hw_shape, pos_embed):
+        """Positioning embeding method.
+
+        Resize the pos_embed, if the input image size doesn't match
+            the training size.
+        Args:
+            patched_img (torch.Tensor): The patched image, it should be
+                shape of [B, L1, C].
+            hw_shape (tuple): The downsampled image resolution.
+            pos_embed (torch.Tensor): The pos_embed weighs, it should be
+                shape of [B, L2, c].
+        Return:
+            torch.Tensor: The pos encoded image feature.
+        """
+        assert patched_img.ndim == 3 and pos_embed.ndim == 3, \
+            'the shapes of patched_img and pos_embed must be [B, L, C]'
+        x_len, pos_len = patched_img.shape[1], pos_embed.shape[1]
+        if x_len != pos_len:
+            if pos_len == self.num_patches + 1:
+                pos_h = self.img_size[0] // self.patch_size
+                pos_w = self.img_size[1] // self.patch_size
+            else:
+                raise ValueError(
+                    'Unexpected shape of pos_embed, got {}.'.format(
+                        pos_embed.shape))
+            pos_embed = self.resize_pos_embed(pos_embed, hw_shape,
+                                              (pos_h, pos_w),
+                                              self.interpolate_mode)
+        return self.drop_after_pos(patched_img + pos_embed)
+
+    @staticmethod
+    def resize_pos_embed(pos_embed, input_shpae, pos_shape, mode):
+        """Resize pos_embed weights.
+
+        Resize pos_embed using bicubic interpolate method.
+        Args:
+            pos_embed (torch.Tensor): Position embedding weights.
+            input_shape (tuple): Tuple for (downsampled input image height,
+                downsampled input image width).
+            pos_shape (tuple): The resolution of downsampled origin training
+                image.
+            mode (str): Algorithm used for upsampling:
+                ``'nearest'`` | ``'linear'`` | ``'bilinear'`` | ``'bicubic'`` |
+                ``'trilinear'``. Default: ``'nearest'``
+        Return:
+            torch.Tensor: The resized pos_embed of shape [B, L_new, C]
+        """
+        assert pos_embed.ndim == 3, 'shape of pos_embed must be [B, L, C]'
+        pos_h, pos_w = pos_shape
+        # keep dim for easy deployment
+        cls_token_weight = pos_embed[:, 0:1]
+        pos_embed_weight = pos_embed[:, (-1 * pos_h * pos_w):]
+        pos_embed_weight = pos_embed_weight.reshape(
+            1, pos_h, pos_w, pos_embed.shape[2]).permute(0, 3, 1, 2)
+        pos_embed_weight = resize(
+            pos_embed_weight, size=input_shpae, align_corners=False, mode=mode)
+        pos_embed_weight = torch.flatten(pos_embed_weight, 2).transpose(1, 2)
+        pos_embed = torch.cat((cls_token_weight, pos_embed_weight), dim=1)
+        return pos_embed
+
     @force_fp32(apply_to=('rec_logit', 'ori_image'))
     def losses(self, rec_logit, ori_image, mask):
         """ Compute reconstruction loss """
         loss = dict() # will be logged
-
-        # dimension adjustment
-        rec_logit = resize(
-            input=rec_logit,
-            size=ori_image.shape[2:],
-            mode='bilinear',
-            align_corners=self.align_corners)
-        if self.sampler is not None:
-            seg_weight = self.sampler.sample(rec_logit, ori_image)
-        else:
-            seg_weight = None
-
-        # resize masks
-        mask_by_pixels = resize(
-            mask.unsqueeze(dim=1).expand(-1, 3, -1, -1), 
-            size=rec_logit.shape[2:], 
-            mode='nearest'
-        )
 
         # compute loss
         if not isinstance(self.loss_decode, nn.ModuleList):
@@ -114,11 +179,7 @@ class MaskDecodeHead(BaseDecodeHead):
             losses_decode = self.loss_decode
         for loss_decode in losses_decode:
             numeric_loss = loss_decode(
-                    rec_logit,
-                    ori_image,
-                    weight=seg_weight,
-                    mask=mask_by_pixels,
-                )
+                    rec_logit, ori_image, mask=mask)
             if loss_decode.loss_name not in loss:
                 loss[loss_decode.loss_name] = numeric_loss
             else:
@@ -127,117 +188,53 @@ class MaskDecodeHead(BaseDecodeHead):
         return loss
 
 
-    def forward_cnn(self, inputs, mask_tokens, ids_restore, original_size):
+    def forward_vit(self, inputs, mae_args, test_mode=False):
 
-        outs = []
-
-        # Append mask tokens, if needed, before feeding into the decoder
-        # This method currently has dimension error
-        if mask_tokens != None:
-            restored_patches = []
-            for entry in inputs:
-                batch, channels, _, feature_size = entry.shape
-                curr_mask = mask_tokens.expand(batch, -1, -1)
-                entry = einops.rearrange(entry, 'b c l f -> b l (c f)')
-                restored = restore_masked(
-                    kept_x=entry, masked_x=curr_mask, ids_restore=ids_restore)
-                restored = einops.rearrange(
-                    restored, 'b l (c f) -> b c l f', c=channels, f=feature_size)
-                num_patches = int(restored.shape[2] ** 0.5)
-                restored = restored.reshape(batch, -1, num_patches, num_patches)
-                restored_patches.append(restored)
-            inputs = restored_patches
-
-        # Concat and reshape the 4 layer features
-        for idx in range(len(inputs)):
-            x = inputs[idx]
-            conv = self.convs[idx] # upsample 1x1 convolutions
-            outs.append(
-                resize(
-                    input=conv(x), size=original_size,
-                    mode=self.interpolate_mode, align_corners=self.align_corners
-                ))
-
-        outs = torch.cat(outs, dim=1) 
-        out = self.fusion_decoder(outs) 
-        return out
-
-    def forward_vit(self, inputs, mask_tokens, ids_restore):
-
-        # Concat and reshape the 4 layer features
-        outs = []
-        for idx in range(len(inputs)):
-            x = inputs[idx]
-            conv = self.convs[idx] # upsample 1x1 convolutions
-            outs.append(conv(x))
-           
-        outs = torch.cat(outs, dim=1)
-        outs = self.channel_compression(outs) 
-        assert mask_tokens != None
+        # forward pass
+        feats = self.projection(inputs)
 
         # reshape and preprocessing
-        mask_tokens = mask_tokens.expand(len(outs), -1, -1)
-        outs = einops.rearrange(outs, 'b c n f -> b n (c f)')
-        feats = restore_masked(kept_x=outs, masked_x=mask_tokens, ids_restore=ids_restore)
+        B, L, F = inputs.shape
+        ids_restore = mae_args['ids_restore']
+        mask_tokens = self.mask_tokens.repeat(B, ids_restore.shape[1] - L, 1)
+        feats = restore_masked(kept_x=feats, masked_x=mask_tokens, ids_restore=ids_restore)
         _, total_patches, _ = feats.shape
         num_patch = int(total_patches**0.5)
-        hw_shape = (num_patch, num_patch)
-        # forward pass
-        feats = self.transformer(feats, hw_shape, sr_enable=False)  # (batch, n_patch**2, feat_size)
-        feats = self.decode_projection(feats) 
-        out = einops.rearrange(
-            feats, 'b (nw nh) (c pw ph) -> b c (nw pw) (nh ph)', 
-            c=self.num_classes, nh=num_patch, nw=num_patch, pw=self.patch_size, ph=self.patch_size)
+        
+        feats = self._pos_embedding(feats, (num_patch, num_patch), self.pos_embed)
 
-        return out
+        for layer in self.layers:
+            feats = layer(feats)
+        feats = self.decoder_norm(feats)
+        feats = self.upsampler(feats)
+        
+        if test_mode:
+            out = einops.rearrange(
+                feats, 'b (nw nh) (pw ph c) -> b c (nw pw) (nh ph)', 
+                c=self.num_classes, nh=num_patch, nw=num_patch, pw=self.patch_size, ph=self.patch_size)
+            return out
+        else:
+            return feats
         
 
-    def forward(self, encodings, mask_tokens=None, ids_restore=None, ori_shape=None):
+    def forward(self, encodings, mae_args=None, test_mode=False):
         """
         To be edited.
         """
-        # Receive 4 stage backbone feature map: 1/4, 1/8, 1/16, 1/32
         inputs = self._transform_inputs(encodings)
-        original_size = ori_shape if ori_shape != None else inputs[0].shape[2:]
-        
-        if not self.use_vit:
-            return self.forward_cnn(inputs, mask_tokens, ids_restore, original_size)
-        else:
-            return self.forward_vit(inputs, mask_tokens, ids_restore)
+        return self.forward_vit(inputs, mae_args, test_mode)
 
 
     # override the BaseDecodeHead
     def forward_train(
-        self, inputs, mask, img_metas, ids_restore, ori_images, train_cfg):
+        self, inputs, mae_args, train_cfg):
         """
         Forward function for training for mask reconstruction
 
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
-        append_masks = True if len(inputs) == 2 else False
-        logger = get_root_logger()
-        if append_masks:
-            encoding, mask_tokens = inputs
-            seg_logits = self(
-                encoding, mask_tokens, ids_restore, ori_shape=ori_images.shape[-2:])
-        else:
-            seg_logits = self(inputs, ori_shape=ori_images.shape[-2:])
-
-        # visualize reconstructed images
-        rank, _ = get_dist_info()
-        if self.save_results and rank == 0 and self.curr_mae_iter % self.save_mae_iter == 0:
-            logger.info(f"saving reconstructed images at MAE iteration {self.curr_mae_iter}...")
-            cwd = os.getcwd()
-            save_path = osp.join(cwd, 'reconstructed_images', f'ep{self.curr_mae_iter}')
-            utils.save_reconstructed_images(
-                path=save_path, 
-                ori=ori_images.detach(), 
-                rec=seg_logits.detach(),
-                img_metas=img_metas)
-        self.curr_mae_iter += 1
-
-        losses = self.losses(seg_logits, ori_images, mask)
+        rec_logits = self(inputs, mae_args)
+        ground_truth = patchify(mae_args['ori_images'], self.patch_size)
+        losses = self.losses(rec_logits, ground_truth, mae_args['masks'])
         return losses
-
-

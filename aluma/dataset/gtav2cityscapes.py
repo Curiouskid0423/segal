@@ -1,24 +1,30 @@
-"""
-config file for gtav -> cityscapes on deeplabv3+_resnet101
-"""
-# NOTE: Using mini GTAV (2000 images) for faster iteration
-# gtav_root = '/shared/yutengli/data/gtav/mini/' 
-gtav_root = '/shared/yutengli/data/gtav/'
+# dataset configs
+gtav_root = '/shared/yutengli/data/gtav/mini/' 
+# gtav_root = '/shared/yutengli/data/gtav/'
 cs_root = '/shared/yutengli/data/cityscapes/'
 META_KEYS = (
     'filename', 'mask_filename', 'ori_filename', 
     'ori_shape','img_shape', 'pad_shape', 
     'scale_factor', 'img_norm_cfg')
-mask_dir = './work_dirs/ada/masks'
+source_free = False
+mask_dir = './work_dirs/dev_v2/masks'
 scale_size = (1280, 640)     # (width, height) by mmcv convention
-# scale_size = (512, 256)   # (width, height) by mmcv convention
 crop_size =(512, 512)
+img_norm_cfg = dict(
+    mean=[127.5, 127.5, 127.5], 
+    std=[127.5, 127.5, 127.5], 
+    to_rgb=True
+)
+
+# miscellaneous
+META_KEYS = (
+    'filename', 'mask_filename', 'ori_filename', 
+    'ori_shape','img_shape', 'pad_shape', 
+    'scale_factor', 'img_norm_cfg')
+mask_dir = './work_dirs/dev_v2/masks'
 source_free = False
 
-# dataset settings
-img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
-
+# various pipelines
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
@@ -32,7 +38,6 @@ train_pipeline = [
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_semantic_seg', 'mask'], meta_keys=META_KEYS),
 ]
-
 query_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadMasks', mask_dir=mask_dir),
@@ -44,7 +49,6 @@ query_pipeline = [
         meta_keys=META_KEYS,
     )
 ]
-
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
@@ -59,7 +63,7 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
-
+# full data pipeline
 data = dict(
     samples_per_gpu=2,
     workers_per_gpu=2,
@@ -90,4 +94,5 @@ data = dict(
         data_root=cs_root,
         img_dir='leftImg8bit/val',
         ann_dir='gtFine/val',
-        pipeline=test_pipeline))    # test on CS
+        pipeline=test_pipeline)     # test on CS
+)

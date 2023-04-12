@@ -27,7 +27,7 @@ model = dict(
 data = dict(samples_per_gpu=SPG, workers_per_gpu=2)
 
 # workflow and runtime configs
-mae_warmup_epochs = 150
+mae_warmup_epochs = 10
 workflow = [((('train_seg', 4), ('train_mae', 2)), 3), ('query', 1)]
 runner = dict(
     type='MultiTaskActiveRunner', 

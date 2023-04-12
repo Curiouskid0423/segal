@@ -8,7 +8,6 @@ from mmseg.core import add_prefix
 from mmseg.models.builder import SEGMENTORS
 from mmseg.utils import get_root_logger
 from mmseg.models.segmentors import EncoderDecoder
-from segal.method.utils import get_random_crops
 from segal.utils.masking import (patchify, random_masking, get_shuffled_ids, 
                                 restore_masked, unpatchify)
 
@@ -33,29 +32,18 @@ class MultiTaskSegmentor(EncoderDecoder):
     """
 
     def __init__(self,
-        backbone,
-        decode_head,
-        auxiliary_head,
-        heuristics='entropy',
-        neck=None,
-        train_cfg=None,
-        test_cfg=None,
-        pretrained=None,
-        init_cfg=None):
+                 mae_config,
+                 backbone,
+                 decode_head,
+                 auxiliary_head,
+                 neck=None,
+                 train_cfg=None,
+                 test_cfg=None,
+                 pretrained=None,
+                 init_cfg=None):
 
         assert neck is None, \
             "`neck` argument is not reliably supported by MultiTaskSegmentor currently."
-
-
-        self.logger = get_root_logger()
-        # save config variables
-        self.mae_configs = Namespace(**backbone['mae_projection'])
-        self.mae_decoder_configs = Namespace(**auxiliary_head)
-        self.seg_configs = Namespace(**backbone['seg_projection'])
-
-        # mae required variables 
-        self.rec_crop_size = self.mae_configs.rec_crop_size
-        self.heuristics = heuristics
 
         super(MultiTaskSegmentor, self).__init__(
             backbone=backbone,
@@ -67,53 +55,28 @@ class MultiTaskSegmentor(EncoderDecoder):
             pretrained=pretrained,
             init_cfg=init_cfg)
 
-        # set num_patches in backbone
+
+        self.logger = get_root_logger()
+        
+        self.mae_configs = Namespace(**mae_config)
         self.mask_ratio = self.mae_configs.mask_ratio
-        decoder_embedding_dim = self.mae_decoder_configs.channels 
-        # decoder_embedding_dim = 1 # FIXME: not expressive enough
-        self.mask_tokens = nn.Parameter(torch.randn(1, 1, decoder_embedding_dim) * 0.02)
         
-        mae_patch = self.mae_configs.patch_size
-        assert self.rec_crop_size[0] % mae_patch == 0 
-
-        self.num_patches = self.rec_crop_size[0] // mae_patch
-        self.masked_length = int(self.num_patches * self.num_patches * self.mask_ratio)
-        self.keep_length = self.num_patches*self.num_patches - self.masked_length
-
-    def sample_subimages(self, x, stage: str = 'warmup', num_sample: int = 2):
-        """ 
-        Given an image x, sample `num_sample` sub-images. If sample stage 
-        is 'warmup', simply sample randomly. If the sample stage is 'train', 
-        sample by self.heuristics.
-        """
-        assert stage in ['warmup', 'train']
-        if stage == 'warmup':
-            # sample by random
-            result = []
-            for image in x:
-                # image -> (3, 264, 528)
-                list_of_crops = get_random_crops(
-                    image=image, crop_size=self.rec_crop_size, num=num_sample)
-                result.extend(list_of_crops) # [2*4, (256, 256)]
-        else:
-            # sample by heuristics
-            raise NotImplementedError('mask-by-heuristics is not implemented yet')
+        H, W = self.backbone.img_size
+        P = self.backbone.patch_size
+        self.num_patches = (W // P) *  (H // P)
+        # self.masked_length = int(self.num_patches * self.mask_ratio)
+        # self.keep_length = self.num_patches - self.masked_length
         
-        return torch.stack(result, dim=0) 
-        
-    def extract_feat(self, img, train_type:str='seg'):
+    def extract_feat(self, img, mae_args=None):
         """ 
         Extract features from images using `TwinMixVisionTransformer`,
         which takes care of different types of projections based on train_type 
         """
-        x = self.backbone(img, train_type)
+        x = self.backbone(img, mae_args)
         return x
 
-    def forward_train(self, img, img_metas, gt_semantic_seg, stage='seg'):
+    def forward_train(self, img, img_metas, gt_semantic_seg, stage='multitask'):
         """Overrides EncoderDecoder. Forward function for training.
-
-        when `train_type` is 'mae', return reconstructed image
-        when `train_type` is 'seg' return the predicted segmentation map
         
         Args:
             img (Tensor): Input images.
@@ -129,85 +92,55 @@ class MultiTaskSegmentor(EncoderDecoder):
             dict[str, Tensor]: a dictionary of loss components
         """
 
-        assert stage in ['mae', 'seg']
+        assert stage in ['mae', 'multitask']
         
         losses = dict()
-        truncate_mask_at_encode = True # a boolean value to decide whether the encoder takes in masks
 
         if stage == 'mae':
-            subimages = self.sample_subimages(img, num_sample=4) # 16 # (B, C, H, W)
-            batch_size = len(subimages)
-            ids_shuffle = get_shuffled_ids(
-                batch_size=batch_size, 
-                total_patches=self.num_patches*self.num_patches
-            ) # (B, H*W)
-            
-            # patchify: (8, 3, 256, 256) -> (8, 3, num_patches, patch_size*patch_size)
-            mae_patch_size = self.mae_configs.patch_size
-            batch_of_patches = patchify(subimages, mae_patch_size)
-            # fix to append channels into the feature length
-            visible_patches, mask, ids_restore = \
-                random_masking(batch_of_patches, self.keep_length, ids_shuffle) # (b c l f)
-            if truncate_mask_at_encode:
-                # assumes that the model does not have any overlapping patchify module
-                masked_images = einops.rearrange(
-                    visible_patches, 'b c l (ph pw) -> b c (l ph) pw', ph=mae_patch_size, pw=mae_patch_size)
-            else:
-                b, c, _, f = visible_patches.shape
-                assert self.mask_tokens.shape[-1] == 1, 'fix mask token length problem before proceeding'
-                visible_patches = einops.rearrange(visible_patches, 'b c l f -> b l (c f)')
-                masked_images = restore_masked(
-                    visible_patches, 
-                    masked_x=self.mask_tokens.expand(b, self.masked_length, c*f),
-                    ids_restore=ids_restore
-                )
+            mae_encoding, masks, ids_restore = self.extract_feat(
+                img, mae_args={ 'ratio': self.mask_ratio, }) 
 
-                masked_images = einops.rearrange(
-                    masked_images, 'b l (c f) -> b c l f', 
-                    c=self.mae_configs.in_channels, f=mae_patch_size**2)
-                masked_images = unpatchify(masked_images, patch_size=mae_patch_size)
-
-            mae_encoding = self.extract_feat(masked_images, train_type='mae') 
-
-            # append the mask tokens back, predict pixel-level reconstruction
-            mask = einops.rearrange(mask, 'b (h w) -> b h w', h=self.num_patches, w=self.num_patches)
-
-            if truncate_mask_at_encode:
-                loss_decode = self._mae_decoder_forward_train(
-                    encoding=mae_encoding, 
-                    mask_tokens=self.mask_tokens.expand(-1, self.masked_length, -1),
-                    mask=mask, 
-                    img_metas=img_metas,
-                    ids_restore=ids_restore, 
-                    ori_images=subimages.detach()
-                )
-            else:
-                loss_decode = self._mae_decoder_forward_train(
-                    encoding=mae_encoding, mask=mask, img_metas=img_metas,
-                    ids_restore=ids_restore, ori_images=subimages.detach()
-                )
+            loss_decode = self._mae_decoder_forward_train(
+                encoding=mae_encoding, 
+                mae_args={
+                    'masks': masks,
+                    'ids_restore': ids_restore,
+                    'img_metas': img_metas,
+                    'ori_images': img.detach()
+                }
+            )
+            losses.update(loss_decode)
 
         else:
-            feat = self.extract_feat(img, train_type='seg')
+            
+            use_mae = True
+
+            feat = self.extract_feat(img)        
             loss_decode = self._decode_head_forward_train(
                 feat, img_metas, gt_semantic_seg)
+            losses.update(loss_decode)
 
-        losses.update(loss_decode)
-        
+            if use_mae and self.with_auxiliary_head:
+                mae_encoding, masks, ids_restore = self.extract_feat(
+                    img, mae_args={ 'ratio': self.mask_ratio, })
+                loss_aux = self._mae_decoder_forward_train(
+                    encoding=mae_encoding, 
+                    mae_args={
+                        'masks': masks,
+                        'ids_restore': ids_restore,
+                        'img_metas': img_metas,
+                        'ori_images': img.detach()
+                    }
+                )
+                losses.update(loss_aux)
+
         return losses
 
-    def _mae_decoder_forward_train(
-        self, encoding, mask, img_metas, ids_restore, ori_images, mask_tokens=None):
+    def _mae_decoder_forward_train(self, encoding, mae_args):
 
         losses = dict()
         loss_decode = self.auxiliary_head.forward_train(
-            inputs=(encoding) if mask_tokens is None else (encoding, mask_tokens),
-            mask=mask,
-            img_metas=img_metas,
-            ids_restore=ids_restore,
-            ori_images=ori_images,
-            train_cfg=self.train_cfg
-        )
+            inputs=encoding, mae_args=mae_args, train_cfg=self.train_cfg)
         losses.update(add_prefix(loss_decode, 'decode'))
         return losses
 
@@ -241,3 +174,11 @@ class MultiTaskSegmentor(EncoderDecoder):
             num_samples=len(data_batch['img_metas']))
 
         return outputs
+    
+    def mae_inference(self, img):
+        with torch.no_grad():
+            mae_encoding, masks, ids_restore = self.extract_feat(
+                img, mae_args={ 'ratio': self.mask_ratio, }) 
+            out = self.auxiliary_head.forward(
+                mae_encoding, mae_args={'ids_restore': ids_restore}, test_mode=True)
+            return out
