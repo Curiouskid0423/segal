@@ -8,14 +8,14 @@ from torch.utils.data import Dataset
 import mmcv
 from mmcv.runner import get_host_info
 from mmcv.runner.builder import RUNNERS
-from mmcv.runner.dist_utils import master_only
+from mmcv.runner import master_only
 from mmseg.datasets import build_dataloader
 import time
 from typing import Dict
 from argparse import Namespace
 from segal.runner import utils
 from segal.runner import ActiveLearningRunner
-from segal.method.utils import save_reconstructed_image
+from segal.method.utils import save_reconstructed_image, get_random_crops
 
 @RUNNERS.register_module()
 class MultiTaskActiveRunner(ActiveLearningRunner):
@@ -26,16 +26,19 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
     """
 
     def __init__(
-        self, model, batch_processor=None, optimizer=None, work_dir=None, logger=None, 
-        meta=None, max_iters=None, max_epochs=None, sample_mode=None, sample_rounds=None):
+        self, model, batch_processor=None, optimizer=None, work_dir=None, logger=None, meta=None, 
+        max_iters=None, max_epochs=None, sample_mode=None, sample_rounds=None, warmup_only=False):
 
         assert batch_processor is None 
         assert sample_mode == 'pixel', \
             "currently only pixel-sampling mode is supported for MultiTaskActiveRunner"
         
+        self.warmup_only = warmup_only
+        
         super(MultiTaskActiveRunner, self).__init__(
             model, batch_processor, optimizer, work_dir, logger, meta, 
             max_iters, max_epochs, sample_mode, sample_rounds)
+
 
     def train(self, data_loader, **kwargs):
         self.model.train()
@@ -90,7 +93,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         run an iteration of the given mode. `outputs` will be losses in both 
         train modes and the `val` mode.
         """
-        if mode.startswith('train') and self.sample_mode == 'pixel':
+        if not self.warmup_only and mode.startswith('train') and self.sample_mode == 'pixel':
             ignore_index = self.cfg_al.settings.pixel.ignore_index
             data_batch = utils.preprocess_data_and_mask(data_batch, ignore_index)
 
@@ -112,8 +115,8 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
 
         self.outputs = outputs
 
-        if self.iter % 20 == 0 and self.iter > 0:
-            self.visualize_mae(num_samples=8)
+        if self.iter % 500 == 0: # and self.iter > 0:
+            self.visualize_mae(num_samples=10, overlay_visible_patches=True)
 
 
     def run_one_sample_round(self, flow_per_round, sample_round, datasets, **kwargs):
@@ -131,7 +134,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             dataset_size = len(ds) if not (self.sample_mode=='image' and mode=='query') else len(ds.pool)
             self.logger.info(f"sample round {sample_round+1} | {mode} | epochs per round {epochs} | dataset size: {dataset_size}")
             # get `epoch_runner`
-            epoch_runner = getattr(self, mode)
+            epoch_runner = getattr(self, mode) if (not self.warmup_only) else self.train_mae
 
             # `new_loader` is NOT used in `query` but only in [`train`, `val`]
             samples_gpu, workers_gpu =  self.configs.data.samples_per_gpu, self.configs.data.workers_per_gpu
@@ -182,7 +185,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
 
         # when user wants to sample regularly, duplicate the inner-workflow tuples
         workflow = utils.process_workflow(workflow, self.sample_rounds)
-        if hasattr(configs, 'mae_warmup_epochs'):
+        if hasattr(configs, 'mae_warmup_epochs') and not self.warmup_only:
             workflow = [[('train_mae', configs.mae_warmup_epochs)]] + workflow
             
         # main loops of train-query-val
@@ -211,21 +214,33 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         self.call_hook('after_run')
 
     @master_only
-    def visualize_mae(self, num_samples=8):
+    def visualize_mae(self, num_samples=8, overlay_visible_patches=False):
 
         self.logger.info(f"saving MAE reconstructed images...")
-        vis_indices = [np.random.randint(0, len(self.query_dataset)) for _ in range(num_samples)]
+
+        vis_dataset = self.query_dataset if not self.warmup_only else self.dataset
+        vis_indices = [np.random.randint(0, len(vis_dataset)) for _ in range(num_samples)]
+        
         cwd = os.getcwd()
-        save_path = osp.join(cwd, 'reconstructed_images', f'iter{self.iter}')
-            
+        save_path = osp.join(cwd, self.configs.mae_viz_dir, f'iter{self.iter}')
+        crop_size = self.configs.model.backbone.img_size
+
         for idx in vis_indices:
-            data = self.query_dataset.get_raw(idx)
+            data = vis_dataset.get_raw(idx)
             img = data['img'].data.detach()
-            rec = self.model.module.mae_inference(img.cuda())
+            cropped_img = get_random_crops(img, crop_size, num=1)[0] # (C, H, W)
+            rec, masks = self.model.module.mae_inference(cropped_img.cuda(), return_mask=True)
+            if len(rec.shape) == 4:
+                rec = rec.squeeze(0)
 
             save_reconstructed_image(
                 path=save_path, 
-                ori=img, 
+                ori=cropped_img, 
                 rec=rec.detach(),
-                img_metas=data['img_metas'])
+                img_metas=data['img_metas'],
+                index=idx,
+                overlay_visible_patches=overlay_visible_patches,
+                masks=masks.detach(),
+                patch_size=self.configs.model.backbone.patch_size
+            )
 

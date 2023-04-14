@@ -11,7 +11,7 @@ import os.path as osp
 import pickle
 import torch.utils.data as torchdata
 import mmcv
-from mmcv.runner import get_dist_info
+from mmcv.runner import get_dist_info, master_only
 from mmseg.utils import get_root_logger
 from .heuristics import AbstractHeuristic, Random
 from .dataset import ActiveLearningDataset
@@ -25,15 +25,6 @@ class ActiveLearningLoop:
     A loop to synchronously update with the training loop (by unit of epoch)
     Each step will label some datapoints from the unlabeled pool, and add it 
     to the training set (labeled).
-
-    Args:
-        dataset:                Type ActiveLearningDataset. Dataset with some sample already labelled.
-        query_dataset:          Dataset with query_pipeline applied (same size as mask)
-        get_probabilities (Function): 
-            Dataset -> **kwargs -> ndarray [n_samples, n_outputs, n_iterations].
-        heuristic (Heuristic):  Heuristic from baal.active.heuristics.
-        max_sample (int):       Limit the number of sample used (-1 is no limit).
-        **kwargs:               Parameters forwarded to `get_probabilities`.
     """
 
     def __init__(
@@ -61,7 +52,6 @@ class ActiveLearningLoop:
             self.num_labelled_pixels =  self.sample_settings['initial_label_pixels']
         self.logger = get_root_logger()
         self.time_hash = datetime.now().strftime("%m%d_%H_%M")
-        # self.queries_save_dir = osp.join(CWD, f'queries_save_dir_{self.time_hash}')
 
         if hasattr(configs.active_learning, 'visualize'):
             assert configs.active_learning.visualize.size > 0
@@ -96,10 +86,8 @@ class ActiveLearningLoop:
 
     def update_pixel_labelled_pool(self):
         
-        # NOTE: make sure no gradients used in this method
-        rank, world = get_dist_info()
+        rank, _ = get_dist_info()
 
-        # get queries in the format of pixel map and truncate trailing zero rows created by `drop_last=False`
         query_pixel_map = self.get_probabilities(self.query_dataset, self.heuristic, **self.kwargs)
         query_pixel_map = query_pixel_map[:len(self.query_dataset)] 
 
@@ -194,29 +182,29 @@ class ActiveLearningLoop:
             ori = ori.flip(dims=axis) # flip the image back for display
         ori = (ori.numpy() * std + mean).astype(np.uint8)
         return ori
-                
+
+    @master_only  
     def visualize(self):
         """
         Visualize the selected pixels on randomly selected images.
         """
 
-        rank, _ = get_dist_info()
+        # rank, _ = get_dist_info()
 
-        if rank == 0:
-            epoch_vis_dir = osp.join(self.vis_path, f"round{self.round}")
-            os.makedirs(epoch_vis_dir, exist_ok=True)
-            self.logger.info("saving visualization...")
-            for v in self.vis_indices:
-                ori, mask_filename = self.query_dataset.get_raw(v), self.get_mask_fname_by_idx(v)
-                with open(mask_filename, 'rb+') as fs:
-                    mask = pickle.load(fs)
+        epoch_vis_dir = osp.join(self.vis_path, f"round{self.round}")
+        os.makedirs(epoch_vis_dir, exist_ok=True)
+        self.logger.info("saving visualization...")
+        for v in self.vis_indices:
+            ori, mask_filename = self.query_dataset.get_raw(v), self.get_mask_fname_by_idx(v)
+            with open(mask_filename, 'rb+') as fs:
+                mask = pickle.load(fs)
 
-                ori = self.revert_transforms(ori, ori['img_metas'].data)
-                file_name = osp.join(epoch_vis_dir, f"{v}.png")
-                
-                if hasattr(self.vis_settings, "overlay") and self.vis_settings.overlay:
-                    self.vis_in_overlay(file_name, ori, mask)
-                else:
-                    self.vis_in_comparison(file_name, ori, mask)
+            ori = self.revert_transforms(ori, ori['img_metas'].data)
+            file_name = osp.join(epoch_vis_dir, f"{v}.png")
+            
+            if hasattr(self.vis_settings, "overlay") and self.vis_settings.overlay:
+                self.vis_in_overlay(file_name, ori, mask)
+            else:
+                self.vis_in_comparison(file_name, ori, mask)
 
-            self.round += 1
+        self.round += 1

@@ -142,7 +142,6 @@ class ActiveLearningDataset(OracleDataset):
         assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
 
-
         # create masks for (1) 'query' always (2) 'train' but only when running ADA setting
         if self.source_free:
             if mask_type == 'query':

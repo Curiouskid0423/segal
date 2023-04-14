@@ -54,6 +54,7 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
             
     runner_cfg = copy.deepcopy(cfg.runner)
     is_active_learning = runner_cfg.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']
+    
     # set max_epochs in runner's config
     if is_active_learning:
         if not is_nested_tuple(cfg.workflow[0]):
@@ -69,7 +70,8 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
             flow = flatten_nested_tuple_list(cfg.workflow)
             runner_cfg.max_epochs = sum([ep for mode, ep in flow if mode == 'train'])
         
-        if runner_cfg.type == 'MultiTaskActiveRunner' and hasattr(cfg, 'mae_warmup_epochs'):
+        if runner_cfg.type == 'MultiTaskActiveRunner' \
+            and hasattr(cfg, 'mae_warmup_epochs') and (not runner_cfg.warmup_only):
             runner_cfg.max_epochs += cfg.mae_warmup_epochs
             
     runner = build_runner(
@@ -114,7 +116,8 @@ def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
         )
         eval_cfg = cfg.get('evaluation', {})
         # Switch runner
-        eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
+        if not hasattr(eval_cfg, 'by_epoch'):
+            eval_cfg['by_epoch'] = cfg.runner['type'] != 'IterBasedRunner'
         eval_hook = DistEvalHook if distributed else EvalHook
         runner.register_hook(
             eval_hook(eval_dataloader, **eval_cfg), priority='LOW')
@@ -146,12 +149,12 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
     
     if distributed:
         
-        if cfg.runner.type == 'MultiTaskActiveRunner':
+        if cfg.runner.type == 'MultiTaskActiveRunner' and hasattr(cfg, "mae_warmup_epochs"):
             find_unused_parameters = True
         else:
             find_unused_parameters = cfg.get('find_unused_parameters', False)
         
-        # find_unused_parameters = cfg.get('find_unused_parameters', False)
+        # find_unused_parameters = True
         
         # Sets the `find_unused_parameters` parameter in
         # torch.nn.parallel.DistributedDataParallel

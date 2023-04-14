@@ -2,7 +2,6 @@
 import torch
 import torch.nn as nn
 from argparse import Namespace
-import einops
 
 from mmseg.core import add_prefix
 from mmseg.models.builder import SEGMENTORS
@@ -64,8 +63,6 @@ class MultiTaskSegmentor(EncoderDecoder):
         H, W = self.backbone.img_size
         P = self.backbone.patch_size
         self.num_patches = (W // P) *  (H // P)
-        # self.masked_length = int(self.num_patches * self.mask_ratio)
-        # self.keep_length = self.num_patches - self.masked_length
         
     def extract_feat(self, img, mae_args=None):
         """ 
@@ -113,6 +110,7 @@ class MultiTaskSegmentor(EncoderDecoder):
 
         else:
             
+            # use_mae = False
             use_mae = True
 
             feat = self.extract_feat(img)        
@@ -175,10 +173,15 @@ class MultiTaskSegmentor(EncoderDecoder):
 
         return outputs
     
-    def mae_inference(self, img):
+    def mae_inference(self, img: torch.Tensor, return_mask=False):
         with torch.no_grad():
+            if len(img) == 3:
+                img = img.unsqueeze(0)
             mae_encoding, masks, ids_restore = self.extract_feat(
                 img, mae_args={ 'ratio': self.mask_ratio, }) 
             out = self.auxiliary_head.forward(
                 mae_encoding, mae_args={'ids_restore': ids_restore}, test_mode=True)
-            return out
+            if return_mask:
+                return out, masks
+            else:
+                return out

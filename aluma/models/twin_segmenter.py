@@ -1,14 +1,20 @@
-checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segmenter/vit_base_p16_384_20220308-96dfe169.pth'  # noqa
+# checkpoints
+# checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segmenter/vit_base_p16_384_20220308-96dfe169.pth'
+checkpoint =  "../mae_pretrain_vit_base_mmcv.pth"
+
 # model settings
 backbone_norm_cfg = dict(type='LN', eps=1e-6, requires_grad=True)
 
-IMG_SIZE = (512, 512)
+# IMG_SIZE = (512, 512)
+IMG_SIZE = (384, 384)
+# EVAL_STRIDE = (480, 480)
+EVAL_STRIDE = (300, 300)
 
 model = dict(
     type='MultiTaskSegmentor',
     pretrained=checkpoint,
     mae_config=dict(
-        mask_ratio=0.3,
+        mask_ratio=0.75
     ),
     backbone=dict(
         type='SharedVisionTransformer',
@@ -56,5 +62,5 @@ model = dict(
         loss_decode=dict(
             type='ReconstructionLoss', loss_weight=0.5),
     ),
-    test_cfg=dict(mode='slide', crop_size=(512, 512), stride=(480, 480)),
+    test_cfg=dict(mode='slide', crop_size=IMG_SIZE, stride=EVAL_STRIDE),
 )

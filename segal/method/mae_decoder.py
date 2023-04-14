@@ -101,6 +101,9 @@ class MaskDecodeHead(BaseDecodeHead):
             
         trunc_normal_init(self.projection, std=self.init_std)
         trunc_normal_init(self.upsampler, std=self.init_std)
+        trunc_normal_init(self.mask_tokens, std=self.init_std)
+        trunc_normal_init(self.pos_embed, std=self.init_std)
+
         for n, m in self.named_modules():
             if isinstance(m, nn.Linear):
                 trunc_normal_init(m, std=self.init_std, bias=0)
@@ -226,8 +229,7 @@ class MaskDecodeHead(BaseDecodeHead):
 
 
     # override the BaseDecodeHead
-    def forward_train(
-        self, inputs, mae_args, train_cfg):
+    def forward_train(self, inputs, mae_args, train_cfg):
         """
         Forward function for training for mask reconstruction
 

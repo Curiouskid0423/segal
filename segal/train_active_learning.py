@@ -79,9 +79,10 @@ def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]
                 datasets['train'] = ConcatDataset([source_set, target_set], separate_eval=False)
             else:
                 assert isinstance(data_cfg.pipeline, list)
-                datasets[mode] = build_dataset(data_cfg, dict(test_mode=False if mode=='train' else True))
+                datasets[mode] = build_dataset(data_cfg, 
+                                    dict(test_mode=False if mode=='train' else True))
     
-    if is_active_learning:
+    if is_active_learning and not config.source_free:
         LT, LQ = len(datasets['train']), len(datasets['query'])
         logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")
 
@@ -197,6 +198,11 @@ def main():
     if fp16_cfg is not None:
         wrap_fp16_model(model)
 
+    # handle `warmup_only` in multi-task training
+    if hasattr(cfg.runner, 'warmup_only') and cfg.runner.warmup_only:
+        setattr(cfg.runner, 'sample_rounds', 1)
+    if not hasattr(cfg, 'mae_viz_dir'):
+        setattr(cfg, 'mae_viz_dir', 'reconstructed_images')
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(

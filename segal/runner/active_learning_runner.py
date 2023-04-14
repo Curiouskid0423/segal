@@ -5,12 +5,10 @@ import shutil
 import torch
 from torch.utils.data import Dataset
 import mmcv
-import numpy as np
 import time
 from typing import List, Dict
 from argparse import Namespace
 
-# from mmcv.cnn.utils import revert_sync_batchnorm
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
@@ -69,7 +67,10 @@ class ActiveLearningRunner(BaseRunner):
             self.get_initial_labels(settings, self.dataset)
         elif self.sample_mode == 'pixel':
             self.mask_size = cfg.scale_size
-            if self.configs.source_free:
+            is_warmup_only = hasattr(self.configs.runner, 'warmup_only') and self.configs.runner.warmup_only
+            if is_warmup_only:
+                self.get_initial_labels(settings, datasets['train'], dataset_type='train')
+            elif self.configs.source_free:
                 self.get_initial_labels(settings, datasets['train'], dataset_type='train')
                 self.get_initial_labels(settings, self.query_dataset, dataset_type='query')
             else:
@@ -135,7 +136,6 @@ class ActiveLearningRunner(BaseRunner):
         for i, data_batch in enumerate(self.data_loader):
             # utils.pixel_mask_check(
             #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
-            # if i > 20: break # debug
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -207,7 +207,7 @@ class ActiveLearningRunner(BaseRunner):
             # total_budget = self.sample_rounds * self.sample_settings.budget_per_round
             self.logger.info(
                 f"Epoch {self.epoch} completed. Labelled {labelled_pix} pixels," \
-                    + f" total budget {budget} pixels x {self.sample_rounds} rounds.")
+                    + f" total budget {budget} pixels x {self.sample_rounds+1} rounds.")
 
         # Reset weights (backbone, neck, decode_head)
         if not hasattr(self.cfg_al, 'reset_each_round') or self.cfg_al.reset_each_round:
@@ -255,22 +255,11 @@ class ActiveLearningRunner(BaseRunner):
             configs(Namespace): config file provided by user and processed with MMCV
         """
 
-        train_set_present, query_set_present = None, None
-
         for key in datasets.keys():
             if key == 'val' or (key == 'query' and self.sample_mode == 'image'):
-                pass
-            else:
-                datasets[key] = ActiveLearningDataset(datasets[key], configs=configs)
-            
-            if key == 'train':
-                train_set_present = True
-            elif key == 'query':
-                query_set_present = True
+                continue
+            datasets[key] = ActiveLearningDataset(datasets[key], configs=configs)
                 
-        assert train_set_present!=None and (query_set_present!=None or self.sample_mode == 'image'), \
-            "Please provide a training set in the list of `workflow`."
-
         self.init_active_variables(
             datasets=datasets,
             settings=self.sample_settings, 
@@ -353,33 +342,6 @@ class ActiveLearningRunner(BaseRunner):
                 num_gpu = len(configs.gpu_ids)
 
                 # initiate a new dataloader if new data
-                """
-                - Standard AL
-                    - train_set == query_set
-
-                - Active Domain Adaptation (ADA)
-                    ##
-                    train_set initially is 20,000 + 2975 images by ConcatDataset
-                    if target_set_has_label:
-                        pass through everything as normal
-                    else:
-                        skip target set during indicing
-                    - at query time, do the same thing as before :: query_set gets uncertanity score for labeling
-                    - eval at target set only
-                    ##
-                    - train_set: 20,000 images, 100% labeled
-                    - query_set: 2975 images, initially no label
-                    - each epoch ::
-                        - when start, train_set should "union" with the query_set for images newly labelled > 0% (ie. "newly_labeled_set")
-                        - when query, track the images that went from 0% labeled to partially labelled. these "newly_labeled_set" will be added to train_set in the next iteration. images will never be removed from the query set
-
-                - Source-free ADA
-                    - Standard AL initialized with source-pretrained weights
-
-                - Continuous Active Learning (CAL)
-                    ## Standard AL with increasing image size ##
-                     
-                """
                 new_loader = build_dataloader(
                     ds, samples_gpu, workers_gpu, num_gpu,
                     dist = True if len(configs.gpu_ids) > 1 else False,

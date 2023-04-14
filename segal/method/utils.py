@@ -6,10 +6,12 @@ import torch
 from typing import List, Dict
 from torchvision.transforms import ToPILImage
 from argparse import Namespace
+from mmcv.parallel  import DataContainer
 from mmcv.cnn import build_norm_layer
 from mmcv.runner import ModuleList
 from mmseg.models.utils import PatchEmbed
 from segal.method.mit_modules import TransformerEncoderLayer
+from segal.utils.masking import unpatchify
 
 tensor2image = ToPILImage(mode='RGB')
 
@@ -104,7 +106,7 @@ def get_crop_bbox(img, crop_size):
 
     return crop_y1, crop_y2, crop_x1, crop_x2
 
-def get_random_crops(image, crop_size, num=4):
+def get_random_crops(image, crop_size, num=1):
 
     def crop(img, crop_bbox):
         """Crop from ``img``"""
@@ -120,21 +122,43 @@ def get_random_crops(image, crop_size, num=4):
 
 
 def save_reconstructed_image(
-    path, ori: torch.Tensor, rec: torch.Tensor, img_metas: List[Dict], index: int):
+    path, ori: torch.Tensor, rec: torch.Tensor, img_metas: DataContainer, 
+    index: int, overlay_visible_patches: bool, masks: torch.Tensor = None, patch_size=None):
     
     assert ori.shape == rec.shape
-    _, _, H, W = ori.shape
+    assert isinstance(img_metas, DataContainer)
+    _, H, W = ori.shape
     os.makedirs(name=path, exist_ok=True)
-    norm_cfg = img_metas[0]['img_norm_cfg']
+    norm_cfg = img_metas.data['img_norm_cfg']
     mean, std = norm_cfg['mean'], norm_cfg['std']
     mean, std = mean[:, None, None], std[:, None, None]
 
-    unnormalize = lambda x: (x.cpu() * std + mean).type(torch.uint8)
-
+    unnormalize = lambda x: torch.clip((x.cpu() * std + mean).type(torch.uint8), 0, 255)
     file_name = osp.join(path, f'sample_{index}.jpg')
-    result = Image.new('RGB', (W*2, H))
-    result.paste(
-        im=tensor2image(unnormalize(ori)), box=(0,0))
-    result.paste(
-        im=tensor2image(unnormalize(rec)), box=(W, 0))
+
+    if not overlay_visible_patches:
+        result = Image.new('RGB', (W*2, H))
+        result.paste(
+            im=tensor2image(unnormalize(ori)), box=(0,0))
+        result.paste(
+            im=tensor2image(unnormalize(rec)), box=(W, 0))
+    else:
+        assert masks != None and patch_size != None
+
+        # reshape masks (1 is removed, 0 is visible)
+        masks = masks.unsqueeze(-1) # (batch, num_patches, 1)
+        masks = masks.repeat(1, 1, patch_size**2 * 3) # (batch, num_patches, feature_len) 
+        masks = unpatchify(masks, patch_size) # (batch, 3, img_height, img_width)
+        assert len(masks)==1, "should be only one image"
+        masks = masks.squeeze(0)
+
+        ori = ori.cuda()
+        ori_with_masks = ori * (1-masks)
+        overlayed_rec = ori * (1-masks) + rec * masks
+
+        result = Image.new('RGB', (W*3, H))
+        result.paste(im=tensor2image(unnormalize(ori)), box=(0,0))
+        result.paste(im=tensor2image(unnormalize(ori_with_masks)), box=(W,0))
+        result.paste(im=tensor2image(unnormalize(overlayed_rec)), box=(2*W, 0))
+        
     result.save(file_name)

@@ -1,8 +1,9 @@
 # Edits during baseline development
 reconstructed_images*/
+mae_partial_success/
+mae_warmup_images/
 visualizations/
 viz*/
-queries_save_dir/
 pretrained_ckpts/
 wandb/
 dist_train_multiple.sh

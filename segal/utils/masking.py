@@ -79,9 +79,9 @@ def unpatchify(patches: torch.Tensor, patch_size: int = 4):
     Combining patches into images.
     """
 
-    batch, channels, num_patches, feature_size = patches.size()
+    batch, num_patches, feature_size = patches.size()
     h, w = int(num_patches**0.5), int(num_patches**0.5)
-    pattern = 'b c (h w) (ph pw) -> b c (h ph) (w pw)'
+    pattern = 'b (h w) (ph pw c) -> b c (h ph) (w pw)'
     return einops.rearrange(
         patches, pattern=pattern, 
         ph=patch_size, pw=patch_size, h=h, w=w)
