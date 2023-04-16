@@ -12,8 +12,8 @@ from mmseg.models.builder import HEADS
 from mmseg.models.decode_heads.decode_head import BaseDecodeHead
 from mmseg.models.backbones.vit import TransformerEncoderLayer
 from mmseg.ops import resize
-
 from segal.utils.masking import restore_masked, patchify
+from segal.utils.pos_embed import get_2d_sincos_pos_embed
 
 
 @HEADS.register_module()
@@ -41,6 +41,7 @@ class MaskDecodeHead(BaseDecodeHead):
                  qkv_bias=True,
                  num_fcs=2,
                  with_cp=False,
+                 pos_embed_type="learnable",
                  norm_cfg=dict(type='LN'),
                  act_cfg=dict(type='GELU'),
                  interpolate_mode='bicubic',
@@ -86,29 +87,47 @@ class MaskDecodeHead(BaseDecodeHead):
         self.upsampler = nn.Linear(
                 embed_dims, patch_size*patch_size*self.num_classes, bias=True) 
         
-        self.mask_tokens = nn.Parameter(torch.zeros(1, 1, embed_dims))
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, embed_dims))
         self.num_patches = \
             (self.img_size[0] // self.patch_size) * (self.img_size[1] // self.patch_size)
+        
+        # without cls_token since we do not finetune for classification
         self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches, embed_dims))
+        self.pos_embed_type = pos_embed_type
+
         self.drop_after_pos = nn.Dropout(p=drop_rate)
         self.init_std = init_std
         delattr(self, 'conv_seg')
         
     def init_weights(self):
-        # FIXME: double check if the init_weights is implemented correctly for pretraining
+        
         module_name = self.__class__.__name__
         self.logger.info(f'initialize {module_name} with init_cfg {self.init_cfg}')
+        self.logger.info(f'position embedding type for {module_name} :: {self.pos_embed_type}')
             
         trunc_normal_init(self.projection, std=self.init_std)
         trunc_normal_init(self.upsampler, std=self.init_std)
-        trunc_normal_init(self.mask_tokens, std=self.init_std)
-        trunc_normal_init(self.pos_embed, std=self.init_std)
+        trunc_normal_init(self.mask_token, std=self.init_std)
+        
+        self.init_pos_embedding()
 
         for n, m in self.named_modules():
             if isinstance(m, nn.Linear):
                 trunc_normal_init(m, std=self.init_std, bias=0)
             elif isinstance(m, nn.LayerNorm):
                 constant_init(m, val=1.0, bias=0.0)
+
+    def init_pos_embedding(self):
+        if self.pos_embed_type == 'learnable':
+            trunc_normal_init(self.pos_embed, std=self.init_std)
+        elif self.pos_embed_type == 'fixed':
+            grid_size = int(self.num_patches**0.5)
+            pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size, cls_token=False)
+            self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+            self.pos_embed.requires_grad_(False)
+        else:
+            raise NotImplementedError(
+                f"unknown pos_embed_type {self.pos_embed_type}")
 
     def _pos_embedding(self, patched_img, hw_shape, pos_embed):
         """Positioning embeding method.
@@ -199,8 +218,8 @@ class MaskDecodeHead(BaseDecodeHead):
         # reshape and preprocessing
         B, L, F = inputs.shape
         ids_restore = mae_args['ids_restore']
-        mask_tokens = self.mask_tokens.repeat(B, ids_restore.shape[1] - L, 1)
-        feats = restore_masked(kept_x=feats, masked_x=mask_tokens, ids_restore=ids_restore)
+        mask_token = self.mask_token.repeat(B, ids_restore.shape[1] - L, 1)
+        feats = restore_masked(kept_x=feats, masked_x=mask_token, ids_restore=ids_restore)
         _, total_patches, _ = feats.shape
         num_patch = int(total_patches**0.5)
         

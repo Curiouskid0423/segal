@@ -4,18 +4,19 @@ Customized runner file for running MAE multitask active learning
 import os
 import os.path as osp
 import numpy as np
+import time
+from typing import Dict
 from torch.utils.data import Dataset
+
 import mmcv
 from mmcv.runner import get_host_info
 from mmcv.runner.builder import RUNNERS
 from mmcv.runner import master_only
+from mmcv.utils import Config
 from mmseg.datasets import build_dataloader
-import time
-from typing import Dict
-from argparse import Namespace
-from segal.runner import utils
+import segal.utils.runner as utils
 from segal.runner import ActiveLearningRunner
-from segal.method.utils import save_reconstructed_image, get_random_crops
+from segal.utils.method import save_reconstructed_image, get_random_crops
 
 @RUNNERS.register_module()
 class MultiTaskActiveRunner(ActiveLearningRunner):
@@ -151,14 +152,14 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             if self.sampling_terminate: 
                 return
 
-    def run(self, datasets: Dict[str, Dataset], configs: Namespace = None, **kwargs):
+    def run(self, datasets: Dict[str, Dataset], configs: Config = None, **kwargs):
         """
         Runs the runner. This method lives through the entire workflow and 
         calls other methods in the Runner class when appropriate.
 
         Args:
             datasets(dict):     dictionary of datasets. each entry is (mode, Dataset)
-            configs(Namespace): config file provided by user and processed with MMCV
+            configs(Config):    config file provided by user and processed with MMCV
             **kwargs:           Miscellaneous arguments to pass down to epoch_runners
         """
 

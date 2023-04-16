@@ -1,11 +1,9 @@
 import numpy as np
 import warnings
 import torch
-import torch.nn as nn
 from torch import Tensor
 from collections.abc import Sequence
-
-from .utils import to_prob, RIPU_Net
+from segal.utils.heuristics import to_prob, RIPU_Net
 
 available_reductions = {
     "max": lambda x: np.max(x, axis=tuple(range(1, x.ndim))),

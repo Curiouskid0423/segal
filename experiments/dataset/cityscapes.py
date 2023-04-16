@@ -5,7 +5,6 @@ META_KEYS = (
     'filename', 'mask_filename', 'ori_filename', 
     'ori_shape','img_shape', 'pad_shape', 
     'scale_factor', 'img_norm_cfg')
-mask_dir = './work_dirs/dev_v2/masks'
 scale_size = (1024, 512) # (width, height) by mmcv convention
 crop_size =(384, 384)
 
@@ -14,11 +13,11 @@ img_norm_cfg = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    dict(type='LoadMasks', mask_dir=mask_dir),
+    dict(type='LoadMasks'),
     dict(type='ResizeWithMask', img_scale=scale_size, ratio_range=(0.8, 2.0)),
     dict(type='RandomFlipWithMask', prob=0.5, direction='horizontal'), 
     dict(type='RandomCropWithMask', crop_size=crop_size, cat_max_ratio=0.75),
-    dict(type='PhotoMetricDistortion'),
+    # dict(type='PhotoMetricDistortion'),
     dict(type='Normalize', **img_norm_cfg),
     # dict(type='Pad', size=scale_size, pad_val=0, seg_pad_val=255),
     dict(type='DefaultFormatBundle'),
@@ -42,7 +41,7 @@ test_pipeline = [
 
 query_pipeline = [
     dict(type='LoadImageFromFile'),
-    dict(type='LoadMasks', mask_dir=mask_dir),
+    dict(type='LoadMasks'),
     dict(type='ResizeWithMask', img_scale=scale_size),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='DefaultFormatBundle'),

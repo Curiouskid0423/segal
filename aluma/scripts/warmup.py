@@ -18,8 +18,12 @@ _base_ = [
     f'{BASE}schedules/default.py' 
 ]
 
+# load in the full model (encoder and decoder)
+load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+mask_dir = './work_dirs/warmup/masks'
+mae_viz_dir = 'mae_warmup_images'
+# data configs
 data = dict(samples_per_gpu=SPG, workers_per_gpu=3) # 12*8=96 images
-
 # simplify decoder head to MLP
 model = dict(
     decode_head=dict(
@@ -31,33 +35,29 @@ model = dict(
         dropout_ratio=0.0,
         concat_input=False,
         num_classes=19,
-        loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0))
-)
-
+        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)))
 # mixed precision
 fp16 = dict(loss_scale='dynamic')
 optimizer = dict(lr=BASE_LR*(SPG*GPU*ACCUM_ITER/256), weight_decay=5e-4)
 optimizer_config = dict(type='GradientCumulativeOptimizerHook', cumulative_iters=ACCUM_ITER)
 
-mae_viz_dir = 'mae_warmup_images'
-
+# logger configs
 log_config = dict(
     interval=40,
     hooks=[ 
         dict(type='TextLoggerHook'), 
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='active_domain_adapt',
-                name=f'segmenter_vit-b_16_mae_batch64_warmup',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='active_domain_adapt',
+        #         name=f'segmenter_vit-b_16_mae_batch64_warmup',
+        #     )
+        # )
     ]
 )
 
-# ordinary workflow
+# workflow configs
 mae_warmup_epochs = 20
 workflow = [('train', mae_warmup_epochs)]
 runner = dict(type='MultiTaskActiveRunner', sample_mode="pixel", warmup_only=True)

@@ -1,16 +1,19 @@
-""" mmcv base configs """
-BASE = '../' 
+# training configs
+QUERY_EPOCH = 1
+SPG = 2
+SAMPLE_ROUNDS = 5
+# budget configs
+DATASET_LEN = 2975
+PIXEL_PER_IMG = int(256*512*0.01)
+BUDGET = PIXEL_PER_IMG * DATASET_LEN
+# path configs
+BASE = './' 
 DATA_FILE = f'{BASE}dataset/cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
-MODEL_FILE = f'{BASE}../configs/_base_/models/fpn_r50.py'
-SPG = 1  # Sample per GPU
-GPU = 8
-""" active learning configs """
-QUERY_EPOCH = 10
-BUDGET = int(256*512*0.005) * 2975
-SAMPLE_ROUNDS = 10
-HEURISTIC = "sparsity"
-VIZ_SIZE = 10
+MODEL_FILE = f'{BASE}../configs/_base_/models/deeplabv3plus_r50-d8.py'
+# miscellaneous configs
+HEURISTIC = "random"
+VIZ_SIZE = 20
 
 custom_imports = dict(
     imports=[
@@ -18,8 +21,12 @@ custom_imports = dict(
     ], allow_failed_imports=False
 )
 
-# work_dir = 'work_dir'
-load_from = 'experiments/gtav_ckpt_fpnR50.pth'
+model = dict(pretrained='open-mmlab://resnet101_v1c', backbone=dict(depth=101))
+load_from = 'experiments/gtav_ckpt_deeplabv3+r101.pth'
+data = dict( samples_per_gpu=SPG, workers_per_gpu=2 ) 
+
+# mixed precision
+fp16 = dict(loss_scale='dynamic')
 
 _base_ = [ 
     MODEL_FILE, 
@@ -40,14 +47,10 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="viz_exp_heursitics_sparsity_7"
+        dir="visualizations/viz_random"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
-    heuristic_cfg=dict(
-        k=1,
-        inflection=0.5
-    )
 )
 
 """ ===== Workflow and Runtime configs ===== """
@@ -59,8 +62,7 @@ runner = dict(
 )
 evaluation = dict(interval=QUERY_EPOCH//2, by_epoch=False, metric='mIoU', pre_eval=True)
 checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
-optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0005)
-# optimizer = dict(type='Adam', lr=2e-4, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.00075, momentum=0.9, weight_decay=0.0005)
 optimizer_config = dict()
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=True)
 
@@ -73,7 +75,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'fpnR50_gtav_sparsity_7',
+                name=f'deeplabv3+r101_pixel_random',
             )
         )
     ]

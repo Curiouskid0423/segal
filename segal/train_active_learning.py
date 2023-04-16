@@ -3,17 +3,12 @@ This file should perform training the way MMSeg conventionally does,
 but with some Active Learning wrappers that we created.
 """
 
-import copy
 import os
 import os.path as osp
-from logging import Logger
 import time
 import warnings
 import torch
 import torch.distributed as dist
-from torch.utils.data import Dataset
-from argparse import Namespace
-from typing import Dict
 
 """ MMCV """
 import mmcv
@@ -23,13 +18,12 @@ from mmcv.utils import Config, get_git_hash
 """ MMSegmentation """
 from mmseg import __version__
 from mmseg.apis import init_random_seed, set_random_seed
-from mmseg.datasets import build_dataset
 from mmseg.models import build_segmentor
 from mmseg.utils import collect_env, get_root_logger, setup_multi_processes
 """Customized"""
 from segal.utils.misc import parse_args
-from segal.utils.train import \
-    (train_al_segmentor, flatten_nested_tuple_list as flatten, is_nested_tuple)
+from segal.utils.train import train_al_segmentor
+from segal.utils.preprocessing import preprocess_datasets, insert_ignore_index
 
 """ Imports to register segal customized mmcv blocks """
 from segal.runner import *
@@ -37,64 +31,6 @@ from segal.hooks import *
 from segal.transforms import * 
 from segal.losses import *
 from segal.method import *
-from segal.dataset_wrapper import ConcatDataset
-
-def preprocess_datasets(config: Namespace, logger: Logger) -> Dict[str, Dataset]:
-
-    datasets = {}
-    is_active_learning =  config.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']
-    # preprocess workflow
-    if is_active_learning:
-        if is_nested_tuple(config.workflow[0]):
-            assert len(config.workflow) == config.runner.sample_rounds+1, \
-                "for irregular sampling, the number of outer tuples in `workflow` has to be equal sample_rounds"
-    
-        flow = flatten(config.workflow)
-
-        assert all([mode in ['train', 'val', 'query'] for (mode, _) in flow]), \
-            "workflow has to be either train, val, or query"
-    else:
-        flow = config.workflow
-
-    # iterate pass the workflow
-    for mode, _ in flow:
-        data_cfg = getattr(config.data, mode)
-        # no need to independently create a `query` dataset in `image-sampling`
-        if mode == 'query' and config.runner.sample_mode == 'image':
-            continue
-        # make sure to use train pipeline cuz test pipeline does not load ground truth
-        if mode == 'val':
-            assert isinstance(data_cfg.pipeline, list)
-            data_cfg.pipeline = config.data.train.pipeline
-        # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
-        if not (mode in datasets.keys()):
-            logger.info(f'Loading `{mode}` set...')
-            if not config.source_free and mode=='train':
-                assert isinstance(data_cfg, list) and len(data_cfg)==2
-                source, target = data_cfg
-                source_set = build_dataset(source, dict(test_mode=False))
-                target_set = build_dataset(target, dict(test_mode=False))
-                if is_active_learning:
-                    datasets['source'], datasets['target'] = source_set, target_set
-                datasets['train'] = ConcatDataset([source_set, target_set], separate_eval=False)
-            else:
-                assert isinstance(data_cfg.pipeline, list)
-                datasets[mode] = build_dataset(data_cfg, 
-                                    dict(test_mode=False if mode=='train' else True))
-    
-    if is_active_learning and not config.source_free:
-        LT, LQ = len(datasets['train']), len(datasets['query'])
-        logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")
-
-    return datasets
-
-def insert_ignore_index(config: Namespace, value: int):
-    assert hasattr(config, "model")
-    for k in config.model.keys():
-        entry = getattr(config.model, k)
-        if isinstance(entry, dict) and 'loss_decode' in entry:
-            entry.ignore_index = value
-            entry.loss_decode.avg_non_ignore=True
 
 def main():
 
@@ -148,7 +84,8 @@ def main():
     # check mask dir name is accurate
     if hasattr(cfg, 'mask_dir'):
         mask_abspath = osp.abspath(osp.join(cfg.mask_dir, os.pardir))
-        assert osp.samefile(mask_abspath, cfg.work_dir), "mask folder has to be within the work_dir"
+        assert osp.samefile(mask_abspath, cfg.work_dir), \
+            f"mask folder has to be within the work_dir but got {mask_abspath}"
     
     # dump config
     cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))
@@ -238,8 +175,7 @@ def main():
         distributed=distributed,
         validate=(not args.no_validate),
         timestamp=timestamp,
-        meta=meta
-        )
+        meta=meta)
 
 
 if __name__ == '__main__':

@@ -2,8 +2,7 @@ DATA_ROOT = '/shared/yutengli/data/gtav/pretraining/'
 # dataset settings
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
-scale_size = (256, 512)
-# crop_size = (512, 512)
+scale_size = (1280, 640)
 # crop_size = (384, 384)
 train_pipeline = [
     dict(type='LoadImageFromFile'),

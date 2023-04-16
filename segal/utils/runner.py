@@ -1,13 +1,13 @@
 """
 Helper functions to de-clutter ActiveLearningRunner class.
 """
-from argparse import Namespace
-from typing import List, Tuple
+from typing import List
 import numpy as np
 import torch
 from torchvision.transforms import InterpolationMode as IM
 import torchvision.transforms.functional as TF
 from mmcv.runner import BaseModule
+from mmcv.utils import Config
 from mmseg.utils import get_root_logger
 from segal.active import get_heuristics
 
@@ -56,11 +56,11 @@ def adjust_mask(mask: torch.Tensor, meta: List, scale=None):
 
     return mask
 
-def get_heuristics_by_config(config: Namespace, sample_mode: str):
+def get_heuristics_by_config(config: Config, sample_mode: str):
     """
-    Returns a Heuristics instance given a config namespace.
+    Returns a Heuristics instance given a config instance.
     Args: 
-        config (Namespace): config file converted from dict to namespace
+        config (Config):    config file converted from dict to Config object
         sample_mode (str):  sample_mode will either be 'pixel', 'image' or 'region'
     Return:
         a Heuristics instance
@@ -99,7 +99,7 @@ def process_workflow(workflow: List, sample_rounds: int):
         return workflow
 
 def get_max_iters(
-    config: Namespace, max_epochs, sample_mode: str, dataset_size: int):
+    config: Config, max_epochs, sample_mode: str, dataset_size: int):
     """
     Given the config and dataset size (required in pixel-based), compute the 
     total iterations based on the total number of epochs, considering both the 
@@ -138,20 +138,6 @@ def check_workflow_validity(flow_per_round):
     return len(wf) == 1 and wf[0] == 'train' \
         or (len(wf) == 2 and all([wf.count(k)==1 for k in ['train', 'query']])) \
         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
-
-def process_multitask_workflow(workflow: List[Tuple], rounds: int):
-    
-    assert len(workflow) == 2, ("multi-task workflow currently only supports sample-regularly "\
-        + "workflow with length of 2, ie. `train` and `query` where `train` is a tuple of tuple")
-
-    # unravel the multi-task training workflow
-    per_round = []
-    base_flow, repeat = workflow[0]
-    for rep in range(repeat):
-        per_round.extend(list(base_flow))
-    per_round.append(workflow[1])
-
-    return [(per_round) for _ in range(rounds)] 
 
 def pixel_mask_check(data_batch, batch_size, index, sample_mode, interval=80, logger=None):
     if index % interval == 0 and sample_mode == 'pixel':

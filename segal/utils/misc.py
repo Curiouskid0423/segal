@@ -141,7 +141,7 @@ def create_pixel_masks(
             assert hasattr(dataset, 'img_dir')
             write_in_file_with_suffix(fname=file_of_fnames, data_path=dataset.img_dir, pattern=pattern, logger=LOGGER)
             
-    LOGGER.info(f"creating masks for `{mask_type}` dataset. start with {init_pixels} per image.")
+    LOGGER.info(f"creating masks for `{mask_type}` dataset. start with {init_pixels} pixels per image.")
             
     with open(file_of_fnames, 'r+') as file_of_fnames:
         fnames = file_of_fnames.read().split(',\n')[:-1] # trim the last empty string

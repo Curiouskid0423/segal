@@ -1,14 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import torch
 import torch.nn as nn
-from argparse import Namespace
-
 from mmseg.core import add_prefix
 from mmseg.models.builder import SEGMENTORS
 from mmseg.utils import get_root_logger
 from mmseg.models.segmentors import EncoderDecoder
-from segal.utils.masking import (patchify, random_masking, get_shuffled_ids, 
-                                restore_masked, unpatchify)
 
 
 @SEGMENTORS.register_module()
@@ -44,6 +40,13 @@ class MultiTaskSegmentor(EncoderDecoder):
         assert neck is None, \
             "`neck` argument is not reliably supported by MultiTaskSegmentor currently."
 
+        self.logger = get_root_logger()
+        self.mae_configs = mae_config
+        self.mask_ratio = self.mae_configs.mask_ratio
+        H, W = backbone.img_size
+        P = backbone.patch_size
+        self.num_patches = (W // P) *  (H // P)
+                
         super(MultiTaskSegmentor, self).__init__(
             backbone=backbone,
             decode_head=decode_head,
@@ -54,15 +57,6 @@ class MultiTaskSegmentor(EncoderDecoder):
             pretrained=pretrained,
             init_cfg=init_cfg)
 
-
-        self.logger = get_root_logger()
-        
-        self.mae_configs = Namespace(**mae_config)
-        self.mask_ratio = self.mae_configs.mask_ratio
-        
-        H, W = self.backbone.img_size
-        P = self.backbone.patch_size
-        self.num_patches = (W // P) *  (H // P)
         
     def extract_feat(self, img, mae_args=None):
         """ 

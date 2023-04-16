@@ -2,13 +2,12 @@
 import os.path as osp
 import platform
 import shutil
-import torch
 from torch.utils.data import Dataset
 import mmcv
 import time
 from typing import List, Dict
-from argparse import Namespace
 
+from mmcv.utils import Config
 from mmcv.parallel.collate import collate as mmcv_collate_fn
 from mmcv.runner import BaseRunner, get_host_info, get_dist_info, save_checkpoint
 from mmcv.runner.builder import RUNNERS
@@ -16,7 +15,8 @@ from mmseg.datasets import build_dataloader
 from segal.active.active_loop import ActiveLearningLoop
 from segal.active.dataset import ActiveLearningDataset
 from segal.model_wrapper import ModelWrapper
-from segal.runner import utils
+import segal.utils.runner as utils
+
 
 @RUNNERS.register_module()
 class ActiveLearningRunner(BaseRunner):
@@ -44,7 +44,7 @@ class ActiveLearningRunner(BaseRunner):
             model, batch_processor, optimizer, work_dir, logger, meta, max_iters, max_epochs)
 
     def init_active_variables(
-        self, datasets: Dict[str, ActiveLearningDataset], settings: dict, cfg: Namespace):
+        self, datasets: Dict[str, ActiveLearningDataset], settings: dict, cfg: Config):
         """
         Helper function to initialize variables for active learning experiments such as 
         ModelWrapper and ActiveLearningLoop. Also updates self._max_iters to be accurate in display.
@@ -52,7 +52,7 @@ class ActiveLearningRunner(BaseRunner):
         Args:
             datasets (Dict[ActiveLearningDataset])  A dict of dataset including 'train', 'query' and optionally 'source'
             settings (dict):                        Dictionary for sampling settings as specified in config file
-            cfg (Namespace):                        Full config object for downstream method uses later.
+            cfg (Config):                        Full config object for downstream method uses later.
         """
 
         self.dataset = datasets['train']
@@ -244,7 +244,7 @@ class ActiveLearningRunner(BaseRunner):
             raise ValueError(
                 "Unknowned sample_mode keyword. Currently supporting pixel- and image-based sample mode.")
 
-    def create_active_sets(self, datasets: Dict[str, Dataset], configs: Namespace) -> List[Dataset]:
+    def create_active_sets(self, datasets: Dict[str, Dataset], configs: Config) -> List[Dataset]:
         """
         A destructive method that converts a dictionary of datasets (torch.utils.data.Dataset) 
         into ActiveLearningRunner compatible datasets given the workflow from config object. Specifically, 
@@ -252,7 +252,7 @@ class ActiveLearningRunner(BaseRunner):
 
         Args:
             datasets(dict):     dictionary of datasets. each entry is (mode, Dataset)
-            configs(Namespace): config file provided by user and processed with MMCV
+            configs(Config): config file provided by user and processed with MMCV
         """
 
         for key in datasets.keys():
@@ -266,14 +266,14 @@ class ActiveLearningRunner(BaseRunner):
             cfg=configs
         )
 
-    def run(self, datasets: Dict[str, Dataset], configs: Namespace = None, **kwargs):
+    def run(self, datasets: Dict[str, Dataset], configs: Config = None, **kwargs):
         """
         Runs the runner. This method lives through the entire workflow and 
         calls other methods in the Runner class when appropriate.
 
         Args:
             datasets(dict):     dictionary of datasets. each entry is (mode, Dataset)
-            configs(Namespace): config file provided by user and processed with MMCV
+            configs(Config): config file provided by user and processed with MMCV
             **kwargs:           Miscellaneous arguments to pass down to epoch_runners
         """
 

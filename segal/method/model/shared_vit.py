@@ -16,7 +16,8 @@ from mmseg.utils import get_root_logger
 from mmseg.models.builder import BACKBONES
 from mmseg.models.backbones.vit import TransformerEncoderLayer
 from mmseg.models.utils import PatchEmbed
-from segal.utils import masking
+import segal.utils.masking as masking
+from segal.utils.pos_embed import get_2d_sincos_pos_embed
 
 @BACKBONES.register_module()
 class SharedVisionTransformer(BaseModule):
@@ -84,6 +85,7 @@ class SharedVisionTransformer(BaseModule):
                  drop_path_rate=0.,
                  with_cls_token=True,
                  output_cls_token=False,
+                 pos_embed_type="learnable",
                  norm_cfg=dict(type='LN'),
                  act_cfg=dict(type='GELU'),
                  patch_norm=False,
@@ -112,8 +114,6 @@ class SharedVisionTransformer(BaseModule):
         assert not (init_cfg and pretrained), \
             'init_cfg and pretrained cannot be set at the same time'
         if isinstance(pretrained, str):
-            # warnings.warn('DeprecationWarning: pretrained is deprecated, '
-            #               'please use "init_cfg" instead')
             self.init_cfg = dict(type='Pretrained', checkpoint=pretrained)
         elif pretrained is not None:
             raise TypeError('pretrained must be a str or None')
@@ -144,6 +144,7 @@ class SharedVisionTransformer(BaseModule):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dims))
         self.pos_embed = nn.Parameter(
             torch.zeros(1, self.num_patches + 1, embed_dims))
+        self.pos_embed_type = pos_embed_type
         self.drop_after_pos = nn.Dropout(p=drop_rate)
 
         if isinstance(out_indices, int):
@@ -212,12 +213,15 @@ class SharedVisionTransformer(BaseModule):
                         (pos_size, pos_size), self.interpolate_mode)
 
             load_state_dict(self, state_dict, strict=False, logger=logger)
+            
         elif self.init_cfg is not None:
             super(SharedVisionTransformer, self).init_weights()
         else:
             module_name = self.__class__.__name__
             logger.info(f'initialize {module_name} with init_cfg {self.init_cfg}')
-            trunc_normal_(self.pos_embed, std=.02)
+            # trunc_normal_(self.pos_embed, std=.02)
+            logger.info(f'position embedding type for {module_name} :: {self.pos_embed_type}')
+            self.init_pos_embedding()
             trunc_normal_(self.cls_token, std=.02)
             for n, m in self.named_modules():
                 if isinstance(m, nn.Linear):
@@ -232,6 +236,19 @@ class SharedVisionTransformer(BaseModule):
                 elif isinstance(m, (_BatchNorm, nn.GroupNorm, nn.LayerNorm)):
                     constant_init(m, val=1.0, bias=0.)
 
+    def init_pos_embedding(self):
+        if self.pos_embed_type == 'learnable':
+            trunc_normal_(self.pos_embed, std=.02)
+        elif self.pos_embed_type == 'fixed':
+            grid_size = int(self.num_patches**0.5)
+            pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], grid_size, cls_token=True)
+            self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+            self.pos_embed.requires_grad_(False)
+        else:
+            raise NotImplementedError(
+                f"unknown pos_embed_type {self.pos_embed_type}")
+        
+        
     def _pos_embedding(self, patched_img, hw_shape, pos_embed):
         """Positioning embedding method.
 
@@ -264,13 +281,13 @@ class SharedVisionTransformer(BaseModule):
         return self.drop_after_pos(patched_img + pos_embed)
 
     @staticmethod
-    def resize_pos_embed(pos_embed, input_shpae, pos_shape, mode):
+    def resize_pos_embed(pos_embed: torch.Tensor, input_shape, pos_shape, mode):
         """Resize pos_embed weights.
 
         Resize pos_embed using bicubic interpolate method.
         Args:
             pos_embed (torch.Tensor): Position embedding weights.
-            input_shpae (tuple): Tuple for (downsampled input image height,
+            input_shape (tuple): Tuple for (downsampled input image height,
                 downsampled input image width).
             pos_shape (tuple): The resolution of downsampled origin training
                 image.
@@ -288,7 +305,7 @@ class SharedVisionTransformer(BaseModule):
         pos_embed_weight = pos_embed_weight.reshape(
             1, pos_h, pos_w, pos_embed.shape[2]).permute(0, 3, 1, 2)
         pos_embed_weight = resize(
-            pos_embed_weight, size=input_shpae, align_corners=False, mode=mode)
+            pos_embed_weight, size=input_shape, align_corners=False, mode=mode)
         pos_embed_weight = torch.flatten(pos_embed_weight, 2).transpose(1, 2)
         pos_embed = torch.cat((cls_token_weight, pos_embed_weight), dim=1)
         return pos_embed
@@ -297,14 +314,17 @@ class SharedVisionTransformer(BaseModule):
         B = inputs.shape[0]
         cls_tokens = self.cls_token.expand(B, -1, -1)
             
-        x, hw_shape = self.patch_embed(inputs) # x=torch.Size([1, 1024, 768])
+        # convnet patch embedding
+        x, hw_shape = self.patch_embed(inputs) # x = size([1, 1024, 768])
+        # append classification and position tokens
         x = torch.cat((cls_tokens, x), dim=1)
         x = self._pos_embedding(x, hw_shape, self.pos_embed)
 
+        # remove class token for transformer encoder input
         if not self.with_cls_token:
-            # Remove class token for transformer encoder input
             x = x[:, 1:]
             
+        # setups for the mask autoencoding branch
         if mae_args != None:
             mask_ratio = mae_args['ratio']
             masked_length = int(self.num_patches * mask_ratio)
@@ -312,6 +332,7 @@ class SharedVisionTransformer(BaseModule):
             ids_shuffle = masking.get_shuffled_ids(B, self.num_patches)# (B, H*W)
             x, masks, ids_restore = masking.random_masking(x, keep_length, ids_shuffle)
             
+        # iterate through vit layers
         outs = []
         for i, layer in enumerate(self.layers):
             x = layer(x)
@@ -320,7 +341,7 @@ class SharedVisionTransformer(BaseModule):
                     x = self.norm1(x)
             if i in self.out_indices:
                 
-                # Remove class token and reshape token for decoder head
+                # remove class token and reshape token for decoder head
                 if self.with_cls_token:
                     out = x[:, 1:]
                 else:

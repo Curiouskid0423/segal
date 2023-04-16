@@ -1,16 +1,24 @@
-BASE = '../' 
+# budget configs
+DATASET_LEN = 2975
+PIXEL_PER_IMG = int(1280*640*0.01) 
+BUDGET = PIXEL_PER_IMG * DATASET_LEN
 SPG = 2
 SAMPLE_ROUNDS = 5
-QUERY_EPOCH = 2
+# path configs
+BASE = '../' 
+MODEL_FILE = f'{BASE}models/twin_segmenter.py'
+DATA_FILE = f'{BASE}dataset/gtav2cityscapes.py'
+RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
+SCHEDULE = f'{BASE}schedules/default.py' 
+# miscellaneous configs
 HEURISTICS = "entropy"
-BUDGET = int(1280*640*0.01) * 2975
 
 # base modules
 _base_ = [
-    f'{BASE}models/twin_segmenter.py', 
-    f'{BASE}dataset/gtav2cityscapes.py',
-    f'{BASE}../configs/_base_/default_runtime.py', 
-    f'{BASE}schedules/default.py' 
+    MODEL_FILE,
+    DATA_FILE,
+    RUNTIME_FILE, 
+    SCHEDULE
 ]
 
 # data configs
@@ -20,8 +28,11 @@ custom_imports = dict(
     ], allow_failed_imports=False)
 data = dict(samples_per_gpu=SPG, workers_per_gpu=4)
 evaluation = dict(interval=200, by_epoch=False)
+mask_dir = './work_dirs/multitask/masks'
 
-load_from = "work_dirs/warmup/epoch_10.pth"
+# load_from = "work_dirs/warmup/epoch_10.pth"
+load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+
 # model configs: simplify decoder head to mlp
 model = dict(
     decode_head=dict(
@@ -41,29 +52,40 @@ model = dict(
 fp16 = dict(loss_scale='dynamic')
 
 # workflow
-optimizer = dict(lr=0.0005, weight_decay=0.) #weight_decay=5e-4)
+optimizer=dict(
+    lr=0.001, 
+    weight_decay=5e-5,
+    paramwise_cfg = dict(
+        custom_keys={ 
+            'backbone': dict(lr_mult=0.05),
+            'auxiliary_head': dict(lr_mult=0.1),
+        }
+    )
+)
+
 lr_config = dict(
     _delete_=True,
     policy='poly',
     warmup='linear',
     warmup_iters=500,
-    warmup_ratio=0.01,
+    # warmup_ratio=0.01,
     power=1.0, 
     min_lr=1e-5,
-    by_epoch=False)
+    by_epoch=False
+)
 
 log_config = dict(
     interval=40,
     hooks=[ 
         dict(type='TextLoggerHook'), 
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='active_domain_adapt',
-                name=f'aluma_vit-b_16_mae-IN1k-init_multitask',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='active_domain_adapt',
+        #         name=f'aluma_vit-b_16_mae-IN1k-init_multitask',
+        #     )
+        # )
     ]
 )
 
@@ -79,8 +101,7 @@ workflow = [
     (('train', 10),)
 ]
 
-runner = dict(
-    type='MultiTaskActiveRunner', sample_mode="pixel", sample_rounds=SAMPLE_ROUNDS)
+runner = dict(type='MultiTaskActiveRunner', sample_mode="pixel", sample_rounds=SAMPLE_ROUNDS)
 
 # active learning configs
 active_learning = dict(
@@ -95,3 +116,20 @@ active_learning = dict(
     reset_each_round=False,
     heuristic=HEURISTICS,
 )
+
+"""
+runner = dict(type='MultiTaskActiveRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
+active_learning = dict(
+    settings = dict(
+        region = dict(      
+            budget_per_round=BUDGET,           
+            initial_label_pixels=0,
+            sample_evenly=True,
+            ignore_index=255,
+            k=1,
+        ),
+    ),
+    reset_each_round=False,
+    heuristic=HEURISTICS,
+)
+"""

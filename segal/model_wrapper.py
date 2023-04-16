@@ -38,8 +38,7 @@ class ModelWrapper:
         self.seed = cfgs.seed
 
     def set_sample_evenly(self):
-        # temp: region-sampling is currently only supported for sample_evenly=True
-        
+
         if self.sample_mode == 'region':
             assert hasattr(self.sample_settings, 'sample_evenly') and self.sample_settings.sample_evenly
             sample_evenly = True
@@ -52,7 +51,7 @@ class ModelWrapper:
         return sample_evenly
 
     def predict_on_dataset(
-        self, dataset: Dataset, heuristic: AbstractHeuristic, tmpdir="./tmpdir/", **kwargs):
+        self, dataset: Dataset, heuristic: AbstractHeuristic, **kwargs):
         """
         Make predictions on the unlabelled pool during the sampling phase.
         Image sampling mode:
@@ -64,28 +63,24 @@ class ModelWrapper:
         self.eval()
         model: EncoderDecoder = self.backbone.module
         self.query_dataset_size = len(dataset)
+        G = len(self.gpu_ids)
         
         assert self.sample_mode == 'image' or isinstance(dataset, ActiveLearningDataset)
 
         sample_evenly = self.set_sample_evenly()
-        
-        test_loader = build_dataloader(
-            dataset,
-            samples_per_gpu=1,
-            workers_per_gpu=self.cfg.data.workers_per_gpu,
-            shuffle=False,
-            num_gpus=len(self.gpu_ids),
-            dist=True if len(self.gpu_ids) > 1 else False,
-            seed=self.seed,
-            drop_last=False
-        )
-
+        workers = self.cfg.data.workers_per_gpu
         results = []
         rank, world_size = get_dist_info()
-        # mask_filenames = []
+
+        test_loader = build_dataloader(
+            dataset, samples_per_gpu=1, workers_per_gpu=workers,
+            shuffle=False, num_gpus=G, dist=True if G > 1 else False,
+            seed=self.seed, drop_last=False)
 
         self.logger.info(f"computing uncertainty scores...")
+        
         if rank == 0: pbar = mmcv.ProgressBar(len(dataset))
+
         for idx, data_batch in enumerate(test_loader):
 
             with torch.no_grad():

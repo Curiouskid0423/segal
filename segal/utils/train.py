@@ -4,7 +4,6 @@ Equivalent to mmseg/apis/train.py
 """
 
 import copy
-from argparse import Namespace
 import torch 
 from torch.utils.data import Dataset
 from typing import Dict, List
@@ -12,8 +11,7 @@ import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
 from mmcv.runner import HOOKS, BaseRunner, build_optimizer, build_runner
-from mmcv.utils import build_from_cfg
-# from mmcv.parallel.collate import collate as mmcv_collate_fn
+from mmcv.utils import build_from_cfg, Config
 from mmseg import digit_version
 from mmseg.models import BaseSegmentor
 from mmseg.datasets import build_dataloader, build_dataset
@@ -34,12 +32,12 @@ def flatten_nested_tuple_list(tuple_list: List):
             result.append(tp)
     return result
 
-def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, timestamp) -> BaseRunner:
+def setup_runner(cfg: Config, model: BaseSegmentor, optimizer, logger, meta, timestamp) -> BaseRunner:
     """
     Set up a runner instance and register its training hooks.
 
     Args:
-        cfg (NameSpace):        config file provided by user and processed with MMCV
+        cfg (Config):        config file provided by user and processed with MMCV
         model (BaseSegmentor):  the segmentation backbone
         optimizer (torch.optim.Optimizer): pytorch optimizer created by build_optimizer()
         logger:                 logger instance from MMCV
@@ -93,13 +91,13 @@ def setup_runner(cfg: Namespace, model: BaseSegmentor, optimizer, logger, meta, 
     runner.timestamp = timestamp
     return runner
 
-def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
+def setup_hooks(runner, cfg: Config, validate: bool, distributed: bool):
     """
     Set up hooks for validation use and custom hooks (e.g. WandB).
 
     Args:
         runner (BaseRunner):    runner instance from MMCV, created with setup_runner() call
-        cfg (NameSpace):        config file provided by user and processed with MMCV
+        cfg (Config):        config file provided by user and processed with MMCV
         validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
         distributed (bool):     boolean to indicate whether to use distributed training
     """
@@ -136,13 +134,13 @@ def setup_hooks(runner, cfg: Namespace, validate: bool, distributed: bool):
             hook = build_from_cfg(hook_cfg, HOOKS)
             runner.register_hook(hook, priority=priority)
 
-def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torch.nn.Module:
+def setup_model(cfg: Config, model: BaseSegmentor, distributed: bool) -> torch.nn.Module:
     """
     Add DataParallel wrapper around a model instance depending on whether
     using distributed training or not.
 
     Args:c
-        cfg (Namespace):        config file provided by user and processed with MMCV
+        cfg (Config):        config file provided by user and processed with MMCV
         model (BaseSegmentor):  the segmentation backbone
         distributed (bool):     boolean to indicate whether to use distributed training
     """
@@ -170,7 +168,7 @@ def setup_model(cfg: Namespace, model: BaseSegmentor, distributed: bool) -> torc
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
     return model
 
-def setup_dataloaders(cfg: Namespace, distributed: bool, datasets: Dict[str, Dataset]):
+def setup_dataloaders(cfg: Config, distributed: bool, datasets: Dict[str, Dataset]):
     """
     Create a list of dataloaders given datasets. This method is only 
     compatible with Iter / EpochBasedRunner (not ActiveLearningRunner). The 
@@ -178,7 +176,7 @@ def setup_dataloaders(cfg: Namespace, distributed: bool, datasets: Dict[str, Dat
     since dataloaders don't need to be reinitialized during training.
 
     Args:
-        cfg (NameSpace):        config file provided by user and processed with MMCV
+        cfg (Config):        config file provided by user and processed with MMCV
         distributed (bool):     boolean to indicate whether to use distributed training
         datasets (Dict):        dictionary of datasets. each entry is (mode, Dataset)
     """
@@ -203,7 +201,7 @@ def setup_dataloaders(cfg: Namespace, distributed: bool, datasets: Dict[str, Dat
     return [build_dataloader(ds, **train_loader_cfg) for ds in datasets.values()]
 
 def train_al_segmentor(
-    model, datasets: Dict[str, Dataset], cfg: Namespace, distributed=False,
+    model, datasets: Dict[str, Dataset], cfg: Config, distributed=False,
     validate=False, timestamp=None, meta=None):
 
     """
@@ -212,7 +210,7 @@ def train_al_segmentor(
     Args:
         model (BaseSegmentor):  the segmentation backbone
         datasets (Dict):        dictionary of datasets. each entry is (mode, Dataset)
-        cfg (Namespace):        config file provided by user and processed with MMCV
+        cfg (Config):        config file provided by user and processed with MMCV
         distributed (bool):     boolean to indicate whether to use distributed training
         validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
         timestamp, meta:        default MMCV arguments. 

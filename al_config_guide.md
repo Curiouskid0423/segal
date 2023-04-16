@@ -1,18 +1,20 @@
 # How to edit Segal configs
 
 
-A config file in Segal is essentially an extension from the standard `mmseg` config file with an additional `active_learning: dict` item and a customized runner instance, `ActiveLearningRunner`. Below are the functionalities for each of the arguments of Segal, and some critical features in `mmseg`.
+A config file in Segal is essentially an extension from the standard `mmseg` config file with an additional `active_learning: dict` item and two types of customized runner instances, `ActiveLearningRunner` and `MultiTaskActiveRunner`. Below are the functionalities for each of the arguments of Segal, and some critical features in `mmseg`.
 
 ```
-
+""" GTAV DATASET IMPORT """
 custom_imports = dict(
     imports=[
         'experiments._base_.dataset_gtav',
     ], allow_failed_imports=False
 )
 
-load_from = 'experiments/gtav_ckpt_fpnR50.pth'
+""" PRETRAINED WEIGHTS """
+load_from = 'experiments/model.pth'
 
+""" BASE MMCV CONFIGS """
 _base_ = [ 
     MODEL_FILE, 
     DATA_FILE, 
@@ -20,7 +22,7 @@ _base_ = [
     SCHEDULE_FILE
 ]
 
-""" ===== Active Learning configs ===== """
+""" ACTIVE LEARNING CONFIGS """
 active_learning = dict(
     settings = dict(
         image = dict(
@@ -32,7 +34,7 @@ active_learning = dict(
             budget_per_round=BUDGET,           
             initial_label_pixels=BUDGET,
             sample_evenly=True,
-            ignore_index=255, # value chosen to be consistent with `seg_pad_val` in Pad transform
+            ignore_index=255
         ),
     ),
     visualize = dict(
@@ -49,19 +51,22 @@ active_learning = dict(
     )
 )
 
-""" ===== Workflow and Runtime configs ===== """
-workflow = [('train', QUERY_EPOCH), ('query', 1)] 
-runner = dict(
-    type='ActiveLearningRunner', 
-    sample_mode="pixel", 
-    sample_rounds=SAMPLE_ROUNDS
-)
-evaluation = dict(interval=QUERY_EPOCH, by_epoch=False, metric='mIoU', pre_eval=True)
-checkpoint_config = dict(by_epoch=True, interval=QUERY_EPOCH)
-lr_config = dict(policy='poly', power=0.9, min_lr=1e-5, by_epoch=True)
-optimizer = dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0005)
-optimizer_config = dict()
+""" WORKFLOW (two options)"""
+workflow = [('train', QUERY_EPOCH), ('query', 1)]   # option 1 (regular)
+workflow = [                                        # option 2 (irregular)
+    (('train', 3), ('query', 1)),
+    (('train', 1), ('query', 1)),
+    (('train', 10),)] 
 
+""" RUNNER CONFIGS (two options) """
+runner = dict(type='ActiveLearningRunner', sample_mode="pixel", sample_rounds=5)    # option 1
+runner = dict(type='MultiTaskActiveRunner', sample_mode="pixel", sample_rounds=5)   # option 2
+
+""" MultiTaskActiveRunner specific settings """
+mask_dir = './work_dirs/my_config_name/masks'
+
+
+""" LOGGER CONFIGS """
 log_config = dict(
     interval=20,
     hooks=[
@@ -71,9 +76,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='<project_name>',
-                name='<experiment_name>',
-            )
-        )
+                name='<experiment_name>'))
     ]
 )
 

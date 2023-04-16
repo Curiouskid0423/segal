@@ -5,15 +5,16 @@ cs_root = '/shared/yutengli/data/cityscapes/'
 source_free = True
 scale_size = (1280, 640) # (width, height) by mmcv convention
 crop_size = (384, 384)   # (512, 512)
-mask_dir = './work_dirs/warmup/masks'
 img_norm_cfg = dict(
-    mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
+    mean=[123.675, 116.28, 103.53], 
+    std=[58.395, 57.12, 57.375], 
+    to_rgb=True)
 
 # various pipelines
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
-    dict(type='LoadMasks', mask_dir=mask_dir),
+    dict(type='LoadMasks'),
     dict(type='ResizeWithMask', img_scale=scale_size, ratio_range=(0.8, 2.0)),
     dict(type='RandomFlipWithMask', prob=0.5, direction='horizontal'), 
     dict(type='RandomCropWithMask', crop_size=crop_size, cat_max_ratio=0.75),
