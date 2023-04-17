@@ -152,7 +152,7 @@ def preprocess_data_and_mask(data_batch, ignore_index=255):
     preprocessing and return the data_batch appropriately masked with ignore_index
     """
     ground_truth = data_batch['gt_semantic_seg'].data[0]
-    mask = data_batch['mask']
+    mask = data_batch['mask'] # mask==0 means not labeled yet
     ground_truth.flatten()[~mask.flatten()] = ignore_index
     data_batch['gt_semantic_seg'].data[0]._data = ground_truth
     return data_batch

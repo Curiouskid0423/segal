@@ -32,8 +32,16 @@ def append_mask_dir(mask_dir: str, curr_dataset: Union[Config, List]) -> Config:
 
 def preprocess_datasets(config: Config, logger: Logger) -> Dict[str, Dataset]:
 
+    def set_val_pipeline_to_train():
+        train_config = config.data.train
+        if isinstance(train_config, list):
+            return train_config[0].pipeline
+        else:
+            return train_config.pipeline
+
     datasets = {}
     is_active_learning =  config.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner']
+
     # preprocess workflow
     if is_active_learning:
         if is_nested_tuple(config.workflow[0]):
@@ -49,14 +57,15 @@ def preprocess_datasets(config: Config, logger: Logger) -> Dict[str, Dataset]:
 
     # iterate pass the workflow
     for mode, _ in flow:
-        data_cfg = getattr(config.data, mode)
+        data_cfg = deepcopy(getattr(config.data, mode))
         # no need to independently create a `query` dataset in `image-sampling`
         if mode == 'query' and config.runner.sample_mode == 'image':
             continue
         # make sure to use train pipeline cuz test pipeline does not load ground truth
         if mode == 'val':
             assert isinstance(data_cfg.pipeline, list)
-            data_cfg.pipeline = config.data.train.pipeline
+            data_cfg.pipeline = set_val_pipeline_to_train()
+
         # avoid creating multiple dataset for the same workflow (e.g. 'train', 'query')
         if not (mode in datasets.keys()):
             logger.info(f'Loading `{mode}` set...')
@@ -89,6 +98,17 @@ def preprocess_datasets(config: Config, logger: Logger) -> Dict[str, Dataset]:
                 datasets[mode] = build_dataset(data_cfg, 
                                     dict(test_mode=False if mode=='train' else True))
     
+    # manually append val set if 'val' is not part of the workflow, to enable validating by iter and not epoch.
+    if hasattr(config, 'multitask_validation_iter') and config.multitask_validation_iter > 0:
+        if not ('val' in datasets):
+            val_config = deepcopy(getattr(config.data, 'val'))
+            # swap pipeline s.t. val set has masks
+            val_config.pipeline = set_val_pipeline_to_train()
+            val_config = append_mask_dir(config.mask_dir, val_config)
+            logger.info(f'Loading `val` set...')
+            # set test_mode=False so that annotation can be loaded for loss computation
+            datasets['val'] = build_dataset(val_config, dict(test_mode=False))
+            
     if is_active_learning and not config.source_free:
         LT, LQ = len(datasets['train']), len(datasets['query'])
         logger.info(f"concatenated query_set into the train_set. train_set size = {LT}, query_set size = {LQ}")

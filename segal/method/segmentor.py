@@ -156,7 +156,6 @@ class MultiTaskSegmentor(EncoderDecoder):
                 DDP, it means the batch size on each GPU), which is used for
                 averaging the logs.
         """
-        # calls `forward_train`. by default, return_loss=True.
         losses = self(stage=stage, **data_batch) 
         loss, log_vars = self._parse_losses(losses)
 
@@ -165,6 +164,23 @@ class MultiTaskSegmentor(EncoderDecoder):
             log_vars=log_vars,
             num_samples=len(data_batch['img_metas']))
 
+        return outputs
+
+    def val_step(self, data_batch, stage, optimizer, **kwargs):
+        """ Override BaseSegmentor """
+        losses = self(stage=stage, **data_batch) 
+        loss, log_vars = self._parse_losses(losses)
+
+        log_vars_ = dict()
+        for loss_name, loss_value in log_vars.items():
+            k = loss_name + '_val'
+            log_vars_[k] = loss_value
+
+        outputs = dict(
+            loss=loss,
+            log_vars=log_vars_,
+            num_samples=len(data_batch['img_metas']))
+        
         return outputs
     
     def mae_inference(self, img: torch.Tensor, return_mask=False):

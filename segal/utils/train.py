@@ -7,6 +7,7 @@ import copy
 import torch 
 from torch.utils.data import Dataset
 from typing import Dict, List
+from logging import Logger
 import warnings
 import mmcv
 from mmcv.parallel import MMDataParallel, MMDistributedDataParallel
@@ -91,19 +92,20 @@ def setup_runner(cfg: Config, model: BaseSegmentor, optimizer, logger, meta, tim
     runner.timestamp = timestamp
     return runner
 
-def setup_hooks(runner, cfg: Config, validate: bool, distributed: bool):
+def setup_hooks(runner, cfg: Config, validate: bool, distributed: bool, logger: Logger):
     """
     Set up hooks for validation use and custom hooks (e.g. WandB).
 
     Args:
         runner (BaseRunner):    runner instance from MMCV, created with setup_runner() call
-        cfg (Config):        config file provided by user and processed with MMCV
+        cfg (Config):           config file provided by user and processed with MMCV
         validate (bool):        boolean to indicate whether the hook is used in validation (default MMCV code)
         distributed (bool):     boolean to indicate whether to use distributed training
     """
 
     """Set up eval / validate hooks"""
     if validate:
+        logger.info(f'Loading `eval` set...')
         eval_dataset = build_dataset(cfg.data.val, dict(test_mode=True))
         eval_dataloader = build_dataloader(
             eval_dataset,
@@ -226,7 +228,7 @@ def train_al_segmentor(
     runner = setup_runner(cfg, model, optimizer, logger, meta, timestamp)
     
     """Set up eval hook and custom hooks (e.g. WandB)"""
-    setup_hooks(runner, cfg, validate, distributed)
+    setup_hooks(runner, cfg, validate, distributed, logger)
 
     """Resume training from a checkpoint file (if given)"""
     if cfg.resume_from is None and cfg.get('auto_resume'):

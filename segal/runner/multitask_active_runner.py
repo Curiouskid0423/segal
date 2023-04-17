@@ -6,10 +6,11 @@ import os.path as osp
 import numpy as np
 import time
 from typing import Dict
+import torch
 from torch.utils.data import Dataset
 
 import mmcv
-from mmcv.runner import get_host_info
+from mmcv.runner import get_host_info, get_dist_info
 from mmcv.runner.builder import RUNNERS
 from mmcv.runner import master_only
 from mmcv.utils import Config
@@ -59,6 +60,14 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             self.call_hook('after_train_iter')
             self._iter += 1
 
+            if hasattr(self, 'multitask_val_iter') and \
+                (self.iter > 0 and self.iter % self.multitask_val_iter == 0):
+                # run validation
+                self.track_validation()
+                # set model back to train mode
+                self.mode = 'train'
+                self.model.train()
+
         self.call_hook('after_train_epoch')
         self._epoch += 1
 
@@ -80,9 +89,42 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         self.call_hook('after_train_epoch')
         self._epoch += 1
 
-    def val(self, data_loader, **kwargs):
+    def track_validation(self):
+        """ compute validation loss at any given iteration """
+        self.model.eval()
         self.mode = 'val'
-        raise NotImplementedError("val mode is not implemented yet for MultiTaskActiveRunner")
+        classname = self.__class__.__name__
+        assert hasattr(self, 'val_dataloader'), \
+            f'track_validation() is called but {classname} does not ' \
+                + 'have attribute `val_dataloader`.'
+        self.logger.info("tracking validation...")
+        time.sleep(2) # Prevent possible deadlock during epoch transition
+        self.call_hook('before_val_epoch')
+        with torch.no_grad():
+            for idx, data in enumerate(self.val_dataloader):
+                self._inner_iter = idx
+                self.call_hook('before_val_iter')
+                self.run_iter(data, mode='val_multitask', train_mode=False)
+                self.call_hook('after_val_iter')
+
+        self.logger.info(f"completed validation at iter {self.iter}...")
+        self.call_hook('after_val_epoch')
+
+    def val(self, data_loader, **kwargs):
+        """ default mmcv function. 
+        run validation after a training epoch is complete 
+        """
+        self.model.eval()
+        self.mode = 'val'
+        self.data_loader = data_loader
+        self.call_hook('before_val_epoch')
+        time.sleep(2)  # Prevent possible deadlock during epoch transition
+        for i, data_batch in enumerate(self.data_loader):
+            self._inner_iter = i
+            self.call_hook('before_val_iter')
+            self.run_iter(data_batch, mode='val_multitask', train_mode=False)
+            self.call_hook('after_val_iter')
+        self.call_hook('after_val_epoch')
 
     def query(self, data_loader, **kwargs):
         self.model.eval()
@@ -102,12 +144,17 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         data = data_batch.copy()
         data.pop('mask', None)
         
+        # all 'train_mae', 'train_multitask' and 'val' are using forward_train()
         if mode == 'train_mae':
             outputs = self.model.train_step(data, 'mae', self.optimizer, **kwargs)
         elif mode == 'train_multitask':
             outputs = self.model.train_step(data, 'multitask', self.optimizer, **kwargs)
+        elif mode == 'val_multitask':
+            outputs = self.model.val_step(data, 'multitask', self.optimizer, **kwargs)
         else:
-            outputs = self.model.val_step(data, self.optimizer, **kwargs)
+            module_name = self.__class__.__name__
+            raise NotImplementedError(
+                f" mode {mode} is not implemented for run_iter() in {module_name}")
 
         if not isinstance(outputs, dict):
             raise TypeError('model.train_step() and model.val_step() must return a dict')
@@ -135,8 +182,13 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
             dataset_size = len(ds) if not (self.sample_mode=='image' and mode=='query') else len(ds.pool)
             self.logger.info(f"sample round {sample_round+1} | {mode} | epochs per round {epochs} | dataset size: {dataset_size}")
             # get `epoch_runner`
-            epoch_runner = getattr(self, mode) if (not self.warmup_only) else self.train_mae
-
+            if self.warmup_only:
+                if self.iter % self.configs.mae_val_iter == 0 and self.iter:
+                    epoch_runner = self.val_mae
+                else:
+                    epoch_runner = self.train_mae
+            else:
+                epoch_runner = getattr(self, mode)
             # `new_loader` is NOT used in `query` but only in [`train`, `val`]
             samples_gpu, workers_gpu =  self.configs.data.samples_per_gpu, self.configs.data.workers_per_gpu
             num_gpus = len(self.configs.gpu_ids)
@@ -177,10 +229,19 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
        
         # set up ActiveLearningDataset instance and label data in the specified strategy
         self.create_active_sets(datasets, configs)
-        
+
+        if hasattr(configs, 'multitask_validation_iter') and configs.multitask_validation_iter > 0:
+            self.multitask_val_iter = configs.multitask_validation_iter
+            workers =  self.configs.data.workers_per_gpu
+            num_gpus = len(self.configs.gpu_ids)
+            self.val_dataloader = build_dataloader(
+                datasets['val'], samples_per_gpu=2, workers_per_gpu=workers, 
+                num_gpus=num_gpus, dist=True if num_gpus>1 else False, 
+                seed=self.configs.seed, drop_last=True)
+            
         # log essential info 
         self.logger.info('start running, host: %s, work_dir: %s', get_host_info(), work_dir)
-        # self.logger.info('Hooks will be executed in the following order:\n%s', self.get_hook_info())
+        self.logger.info('Hooks will be executed in the following order:\n%s', self.get_hook_info())
         self.logger.info('workflow: %s', workflow)
         self.call_hook('before_run')
 

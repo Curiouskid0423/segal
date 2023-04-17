@@ -64,7 +64,7 @@ runner = dict(type='MultiTaskActiveRunner', sample_mode="pixel", sample_rounds=5
 
 """ MultiTaskActiveRunner specific settings """
 mask_dir = './work_dirs/my_config_name/masks'
-
+mae_viz_dir = 'mae_warmup_images' # can be omitted
 
 """ LOGGER CONFIGS """
 log_config = dict(

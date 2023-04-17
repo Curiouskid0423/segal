@@ -150,13 +150,13 @@ class ModelWrapper:
             
         return indices
 
-    def get_regions(self, selection_pool, uc_map, side=3):
+    def get_regions(self, selection_pool, uc_map, radius=1):
         """
         A function for region-based sampling. Given `selection_pool` and `uc_map`, 
         return the indices of selected REGULAR-regions of size `side*side`. Need 
         to address all 4 cases of `sample_threshold` and `sample_evenly=[True, False]`
         """
-        # scores = self.region_scorer() # keep grad 
+        scores = self.region_scorer() # keep grad 
         raise NotImplementedError()
 
     def get_pixels_by_budget(
@@ -203,7 +203,7 @@ class ModelWrapper:
         indices_of_original_shape = np.unravel_index(indices, uc_map.shape)
         return indices_of_original_shape
 
-    def extract_query_indices(self, uc_map, sample_evenly=True):
+    def extract_query_indices(self, uc_map, sample_evenly=True) -> np.ndarray:
         """
         Given either an uncertainty map (e.g. 512 x 1024 for Cityscapes) or a list
         of uncertainty maps, return a set of query indices in corresponding dimensions.

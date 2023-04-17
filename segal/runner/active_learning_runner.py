@@ -260,11 +260,7 @@ class ActiveLearningRunner(BaseRunner):
                 continue
             datasets[key] = ActiveLearningDataset(datasets[key], configs=configs)
                 
-        self.init_active_variables(
-            datasets=datasets,
-            settings=self.sample_settings, 
-            cfg=configs
-        )
+        self.init_active_variables(datasets, self.sample_settings, configs)
 
     def run(self, datasets: Dict[str, Dataset], configs: Config = None, **kwargs):
         """
@@ -383,10 +379,18 @@ class ActiveLearningRunner(BaseRunner):
             meta.update(self.meta)
         meta.update(epoch=self.epoch + 1, iter=self.iter)
 
-        filename = filename_tmpl.format(self.epoch + 1)
+        # creating filename
+        if self.configs.checkpoint_config.by_epoch:
+            filename = filename_tmpl.format(self.epoch + 1)
+        else:
+            filename = f"iter_{self.iter+1}.pth"
         filepath = osp.join(out_dir, filename)
+        # whether to save optimizer
         optimizer = self.optimizer if save_optimizer else None
+        # save to disk
         save_checkpoint(self.model, filepath, optimizer=optimizer, meta=meta)
+        
+        # link the last checkpoint
         if create_symlink:
             dst_file = osp.join(out_dir, 'latest.pth')
             if platform.system() != 'Windows':

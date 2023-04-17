@@ -3,6 +3,7 @@ from collections.abc import Sequence
 import pickle
 import torch
 import torch.distributed as dist
+import torch.nn as nn
 from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
 # from torch.utils.data.dataloader import default_collate
@@ -80,3 +81,25 @@ def batch_preprocess(data_batch):
         ext_img_meta = data_batch['img_metas'][0]
 
     return ext_img, ext_img_meta
+
+def region_selector(budget: int, uc_map: torch.Tensor, 
+        radius: int, sample_evenly: bool):
+    """
+    Perform region acquisition. Code adapted from the RIPU paper.
+    """
+    assert sample_evenly, "region sampling is only implemented for sample_evenly=True"
+    assert len(uc_map.shape)==2, \
+        f"expected uncertainty map to be 2D but got {len(uc_map.shape)} dimensions"
+    
+    region_size = 2 * radius * 1
+    region_budgets = budget / (region_size**2)
+
+    for anchor in range(region_budgets):
+        values, indices_h = torch.max(uc_map, dim=0)
+        _, indices_w = torch.max(values, dim=0)
+        w, h = indices_w.item(), indices_h[w].item()
+
+        active_start_w = w - radius if w - radius >= 0 else 0
+        active_start_h = h - radius if h - radius >= 0 else 0
+        active_end_w = w + radius + 1
+        active_end_h = h + radius + 1

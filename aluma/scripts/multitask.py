@@ -27,11 +27,12 @@ custom_imports = dict(
         'experiments._base_.dataset_gtav',
     ], allow_failed_imports=False)
 data = dict(samples_per_gpu=SPG, workers_per_gpu=4)
-evaluation = dict(interval=200, by_epoch=False)
+evaluation = dict(interval=500, by_epoch=False)
 mask_dir = './work_dirs/multitask/masks'
 
 # load_from = "work_dirs/warmup/epoch_10.pth"
 load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+multitask_validation_iter = 200
 
 # model configs: simplify decoder head to mlp
 model = dict(
