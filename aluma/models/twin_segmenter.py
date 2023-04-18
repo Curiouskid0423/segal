@@ -5,7 +5,8 @@ checkpoint = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_
 
 # model settings
 backbone_norm_cfg = dict(type='LN', eps=1e-6, requires_grad=True)
-POS_EMBED_TYPE = 'fixed'
+# POS_EMBED_TYPE = 'fixed' # sinusoidal position embedding
+POS_EMBED_TYPE = 'learnable'
 
 # IMG_SIZE = (512, 512)
 IMG_SIZE = (384, 384)

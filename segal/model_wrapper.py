@@ -14,7 +14,8 @@ from mmseg.datasets import build_dataloader
 from mmseg.models import EncoderDecoder
 from segal.active.dataset.active_dataset import ActiveLearningDataset
 from segal.active.heuristics import AbstractHeuristic
-from segal.utils.sampling import collect_results_gpu, batch_preprocess
+from segal.utils.sampling import \
+    (collect_results_gpu, batch_preprocess, region_selector)
 from segal.utils.misc import newline_after_pbar
 
 class ModelWrapper:
@@ -87,20 +88,18 @@ class ModelWrapper:
                 ext_img, ext_img_meta = batch_preprocess(data_batch)
                 logits = model.whole_inference(ext_img, ext_img_meta, rescale=False)
                 scores = heuristic.get_uncertainties(logits)
-                
                 # Cannot store the entire pixel-level map due to memory shortage.
-                if self.sample_mode == 'pixel':
+                if self.sample_mode in ['pixel', 'region']:
                     assert len(scores) == 1, "batch size not one for query dataloader"
+                    # mask out labeled pixels to avoid reselection
                     score = scores[0]
                     mask = data_batch['mask'][0].numpy()
-                    # mask_filenames.append(data_batch['mask_filename'][0])
-                    score[mask] = -1.0  # Mask labeled pixels (0 is the lowest uncertainty value)
+                    score[mask] = -float('inf') 
                     if sample_evenly:
                         new_query = self.extract_query_indices(uc_map=score)
                         results.append(new_query)
                     else:
                         results.append(score)
-
                 elif self.sample_mode == 'image':
                     results.extend(scores)
                 else:
@@ -119,21 +118,35 @@ class ModelWrapper:
 
         # collect results from all devices (GPU)
         results = np.array(results, dtype=bool)
-        all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
-        all_results = np.array(all_results)
+        if G > 1:
+            all_results = collect_results_gpu(results, size=np.prod(results.shape)) or []
+            all_results = np.array(all_results)
+        else:
+            all_results = results
+
+        print(f"[rank {rank}] debugger message from model_wrapper: results  {len(all_results)}")
 
         # For rank 0 worker
         if len(all_results) > 0:
             return all_results
-
+        
         # For workers that are not rank 0
-        if self.sample_mode == 'pixel':
+        if self.sample_mode in ['pixel', 'region']:
             ds = self.cfg.scale_size
             return np.zeros(shape=(len(dataset), ds[0], ds[1]))
         else:
             return np.zeros(len(dataset))
 
-    def get_indices(self, selection_pool, uc_map):
+    def get_pixels(self, selection_pool, uc_map):
+        """
+        Given an uncertainty map, which is 2D (H, W) or 3D (B, H, W), 
+        return the indices of the top uncertainty scores in 1D.
+        Args:
+            selection_pool (int):   number of pixels to be selected
+            uc_map (torch.Tensor):  uncertainty map tensor that can be 2D or 3D
+        Return:
+            1-dimensional indices of the top uncertainty pixels. Reshaping will happen afterwards.
+        """
         if self.cfg.active_learning.heuristic == 'entropy' and hasattr(self.sample_settings, 'entropy_prop'):
             entropy_prop = float(self.sample_settings['entropy_prop'])
             self.logger.info("Using entropy sampling with proportion: ", entropy_prop)
@@ -150,20 +163,24 @@ class ModelWrapper:
             
         return indices
 
-    def get_regions(self, selection_pool, uc_map, radius=1):
+    def get_regions(self, selection_pool: int, uc_map: torch.Tensor, radius: int = 1):
         """
-        A function for region-based sampling. Given `selection_pool` and `uc_map`, 
-        return the indices of selected REGULAR-regions of size `side*side`. Need 
-        to address all 4 cases of `sample_threshold` and `sample_evenly=[True, False]`
-        """
-        scores = self.region_scorer() # keep grad 
-        raise NotImplementedError()
+        Given an uncertainty map, which is 2D (H, W) or 3D (B, H, W), 
+        return the indices of the most uncertain regions in a 1-dimension vector
 
-    def get_pixels_by_budget(
-        self, budget: int, uc_map: torch.Tensor, sample_evenly: bool, mode='pixel'):
+        Args:
+            selection_pool (int):   number of pixels to be selected
+            uc_map (torch.Tensor):  uncertainty map tensor that can be 2D or 3D
+            radius (int):           set the sampling unit as `(2*radius+1)**2`
+        Return:
+            1-dimensional indices of the top uncertainty pixels. Reshaping will happen afterwards.
         """
-        The method is for pixel-based sampling (not image-based).
+        indices = region_selector(selection_pool, uc_map, radius, sample_evenly=True)
+        assert len(indices)==1, "`indices` should be 1-dimensional"
+        return indices[0]
 
+    def query_by_budget(self, budget: int, uc_map: torch.Tensor, sample_evenly: bool):
+        """
         Given uncertainty map or a list of uncertainty maps, budget, and sample_evenly,
         return the top K pixels to label according to the budget and `sample_threshold`
         Returns (value, index) using torch.Tensor.topk API.
@@ -177,7 +194,7 @@ class ModelWrapper:
         if hasattr(self.sample_settings, 'sample_threshold'):
             top_k_percent = self.sample_settings['sample_threshold']
             assert top_k_percent > 0., \
-                f"Can only sample with sample_threshold > 0, but received sample_threshold {top_k_percent}"
+                f"Can only sample with sample_threshold > 0, but received {top_k_percent}"
             selection_pool = int(top_k_percent / 100 * unit)
         else:
             if sample_evenly:
@@ -186,12 +203,13 @@ class ModelWrapper:
                 selection_pool = budget
 
         # define indices
-        if mode == 'region':
+        if self.sample_mode == 'region':
             indices = self.get_regions(selection_pool, uc_map)
         else:
-            indices = self.get_indices(selection_pool, uc_map)
-
-        if top_k_percent != None:  # sample_threshold=True
+            indices = self.get_pixels(selection_pool, uc_map)
+       
+        # when sample_threshold = True
+        if top_k_percent != None:  
             if sample_evenly:
                 query_size = budget // self.query_dataset_size
                 if query_size == 0:
@@ -216,25 +234,18 @@ class ModelWrapper:
                             all images. By default to True when uc_map is NOT a list, 
                             i.e. 2 dimension.
         Return:
-            query_indices:  A boolean mask to indicate which pixels to label
+            new_query:  A boolean mask of uc_map.shape indicating which pixels to label
         """
 
         assert (sample_evenly and len(uc_map.shape) == 2) or \
             (not sample_evenly and len(uc_map.shape) == 3)
 
-        sample_unit = 'pixel'
-
         budget = self.sample_settings.budget_per_round
         uc_map_cuda = torch.FloatTensor(uc_map).cuda() 
-        if sample_unit == 'pixel':
-            indices = self.get_pixels_by_budget(budget, uc_map_cuda, sample_evenly)
-        elif sample_unit == 'region':
-            indices = self.get_pixels_by_budget(
-                budget, uc_map_cuda, sample_evenly, unit='region')
-        else:
-            raise NotImplementedError("Not recognized sampling unit.")
+        indices = self.query_by_budget(budget, uc_map_cuda, sample_evenly)
         new_query = np.zeros(uc_map.shape, dtype=bool)
         new_query[indices] = True
+        
         return new_query
 
     def get_params(self):

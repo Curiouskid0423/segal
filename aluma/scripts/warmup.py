@@ -21,7 +21,6 @@ _base_ = [
 
 # load in the full model (encoder and decoder)
 load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
-mask_dir = './work_dirs/warmup/masks'
 mae_viz_dir = 'mae_warmup_images'
 # data configs
 data = dict(samples_per_gpu=SPG, workers_per_gpu=3) # 12*8=96 images

@@ -82,13 +82,13 @@ class ActiveLearningDataset(OracleDataset):
         super().__init__(self.labelled_map, random_state, last_active_steps)
  
         # make all images accessible from the getter function (FIXME: BAAL legacy, to be removed later)
-        if self.sample_mode == 'pixel':
+        if self.sample_mode in ['pixel', 'region']:
             self.label(index=list(range(len(self.dataset))))
 
     def __getitem__(self, index):
         # index should be relative to the currently available list of indices
         active_index = self.get_indices_for_active_step()[index] 
-        if self.sample_mode == 'pixel':
+        if self.sample_mode != 'image':
             return self.dataset[index] # self.masks[index]
         else:
             return self.dataset[active_index]

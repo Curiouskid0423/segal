@@ -42,7 +42,9 @@ def main():
     # manually insert ignore_index for pixel sampling (and region-based in future development)
     if cfg.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner'] \
         and cfg.runner.sample_mode != 'image':
-        ignore_index = cfg.active_learning.settings.pixel.ignore_index
+        active_settings = cfg.active_learning.settings
+        active_config = getattr(active_settings, cfg.runner.sample_mode)
+        ignore_index = getattr(active_config, 'ignore_index')
         insert_ignore_index(config=cfg, value=ignore_index)
 
     if args.cfg_options is not None:
@@ -80,13 +82,12 @@ def main():
 
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
-
-    # check mask dir name is accurate
-    if hasattr(cfg, 'mask_dir'):
-        mask_abspath = osp.abspath(osp.join(cfg.mask_dir, os.pardir))
-        assert osp.samefile(mask_abspath, cfg.work_dir), \
-            f"mask folder has to be within the work_dir but got {mask_abspath}"
     
+    # create mask_dir
+    mask_dir = osp.join(osp.abspath(cfg.work_dir), 'masks')
+    os.makedirs(mask_dir, exist_ok=True)
+    setattr(cfg, 'mask_dir', mask_dir)
+
     # dump config
     cfg.dump(osp.join(cfg.work_dir, osp.basename(args.config)))
     
@@ -138,8 +139,14 @@ def main():
     # handle `warmup_only` in multi-task training
     if hasattr(cfg.runner, 'warmup_only') and cfg.runner.warmup_only:
         setattr(cfg.runner, 'sample_rounds', 1)
+    
+    # set mae visualization folder
     if not hasattr(cfg, 'mae_viz_dir'):
-        setattr(cfg, 'mae_viz_dir', 'reconstructed_images')
+        setattr(cfg, 'mae_viz_dir', osp.join(cfg.work_dir, 'reconstructed_images'))
+    else:
+        base_viz_dir = osp.basename(cfg.mae_viz_dir)
+        setattr(cfg, 'mae_viz_dir', osp.join(cfg.work_dir, base_viz_dir))
+
     # SyncBN is not support for DP
     if not distributed:
         warnings.warn(

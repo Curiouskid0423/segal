@@ -28,10 +28,9 @@ custom_imports = dict(
     ], allow_failed_imports=False)
 data = dict(samples_per_gpu=SPG, workers_per_gpu=4)
 evaluation = dict(interval=500, by_epoch=False)
-mask_dir = './work_dirs/multitask/masks'
 
-# load_from = "work_dirs/warmup/epoch_10.pth"
-load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+# load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+load_from = "work_dirs/warmup/iter_1000.pth"
 multitask_validation_iter = 200
 
 # model configs: simplify decoder head to mlp
@@ -58,7 +57,7 @@ optimizer=dict(
     weight_decay=5e-5,
     paramwise_cfg = dict(
         custom_keys={ 
-            'backbone': dict(lr_mult=0.05),
+            'backbone': dict(lr_mult=0.1),
             'auxiliary_head': dict(lr_mult=0.1),
         }
     )
@@ -79,14 +78,14 @@ log_config = dict(
     interval=40,
     hooks=[ 
         dict(type='TextLoggerHook'), 
-        # dict(
-        #     type='WandbLoggerHookWithVal',
-        #     init_kwargs=dict(
-        #         entity='syn2real',
-        #         project='active_domain_adapt',
-        #         name=f'aluma_vit-b_16_mae-IN1k-init_multitask',
-        #     )
-        # )
+        dict(
+            type='WandbLoggerHookWithVal',
+            init_kwargs=dict(
+                entity='syn2real',
+                project='active_domain_adapt',
+                name=f'aluma_vit-b_16_mae-IN1k-init_multitask',
+            )
+        )
     ]
 )
 
@@ -94,7 +93,7 @@ log_config = dict(
 # workflow = [('train', QUERY_EPOCH), ('query', 1)]
 # multitask workflow
 workflow = [
-    (('train', 3), ('query', 1)),
+    (('train', 2), ('query', 1)),
     (('train', 1), ('query', 1)),
     (('train', 1), ('query', 1)),
     (('train', 1), ('query', 1)),

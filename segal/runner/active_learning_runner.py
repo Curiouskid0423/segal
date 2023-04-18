@@ -65,7 +65,7 @@ class ActiveLearningRunner(BaseRunner):
             
         if self.sample_mode == 'image':
             self.get_initial_labels(settings, self.dataset)
-        elif self.sample_mode == 'pixel':
+        elif self.sample_mode in ['pixel', 'region']:
             self.mask_size = cfg.scale_size
             is_warmup_only = hasattr(self.configs.runner, 'warmup_only') and self.configs.runner.warmup_only
             if is_warmup_only:
@@ -100,8 +100,8 @@ class ActiveLearningRunner(BaseRunner):
             train_mode (bool):  A boolean to indicate whether the current phase is in training mode
         """
             
-        if train_mode and self.sample_mode == 'pixel':
-            ignore_index = self.cfg_al.settings.pixel.ignore_index
+        if train_mode and self.sample_mode in ['pixel', 'region']:
+            ignore_index = self.sample_settings.ignore_index
             data_batch = utils.preprocess_data_and_mask(data_batch, ignore_index)
 
         # local variable to avoid runtime error in forward() by removing 'mask'
@@ -136,6 +136,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, data_batch in enumerate(self.data_loader):
             # utils.pixel_mask_check(
             #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
+            if i >= 50: break
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)
@@ -206,8 +207,8 @@ class ActiveLearningRunner(BaseRunner):
             budget = self.sample_settings.budget_per_round
             # total_budget = self.sample_rounds * self.sample_settings.budget_per_round
             self.logger.info(
-                f"Epoch {self.epoch} completed. Labelled {labelled_pix} pixels," \
-                    + f" total budget {budget} pixels x {self.sample_rounds+1} rounds.")
+                f"Epoch {self.epoch} completed. Labelled {labelled_pix} pixels, total budget " \
+                    + f"{budget} pixels x {self.sample_rounds} rounds (excluding `initial_pixels`).")
 
         # Reset weights (backbone, neck, decode_head)
         if not hasattr(self.cfg_al, 'reset_each_round') or self.cfg_al.reset_each_round:
@@ -216,7 +217,7 @@ class ActiveLearningRunner(BaseRunner):
         
         # Visualize the labeled query pixels
         if hasattr(self.cfg_al, "visualize"):
-            self.active_learning_loop.visualize()
+            self.active_learning_loop.visualize(self.model)
 
         self.logger.info("Process sleep for 3 seconds.")
         time.sleep(3) # prevent deadlock before step() returns from all devices
@@ -238,7 +239,9 @@ class ActiveLearningRunner(BaseRunner):
             active_set.label_randomly(sample_settings['initial_pool'])
             self.logger.info(
                 f"ActiveLearningDataset created | {dataset_type} | initial pool = {sample_settings['initial_pool']}.")
-        elif self.sample_mode == 'pixel':
+        elif self.sample_mode in ['pixel', 'region']:
+            # FIXME: `region` sampling should be initialized with labelled regions and not scatter pixels
+            #        in the current case where init_pixels = 0 it does not matter.
             active_set.label_all_with_mask(mask_shape=self.mask_size, mask_type=dataset_type)
         else:
             raise ValueError(

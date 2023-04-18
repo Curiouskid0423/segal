@@ -1,7 +1,5 @@
 # Edits during baseline development
-reconstructed_images*/
-mae_partial_success/
-mae_warmup_images/
+mae_reconstructions/
 visualizations/
 viz*/
 pretrained_ckpts/

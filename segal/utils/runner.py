@@ -111,7 +111,7 @@ def get_max_iters(
     sample_settings = getattr(config.active_learning.settings, sample_mode)
     sample_rounds = config.runner.sample_rounds
 
-    if sample_mode == 'pixel':
+    if sample_mode in ['pixel', 'region']:
         iter_per_epoch = np.ceil(dataset_size / effective_batch_size).astype(int)
         return max_epochs * iter_per_epoch
     elif sample_mode == 'image':
@@ -140,7 +140,7 @@ def check_workflow_validity(flow_per_round):
         or (len(wf) == 3 and all([wf.count(k)==1 for k in ['train', 'val', 'query']]))
 
 def pixel_mask_check(data_batch, batch_size, index, sample_mode, interval=80, logger=None):
-    if index % interval == 0 and sample_mode == 'pixel':
+    if index % interval == 0 and sample_mode in ['pixel', 'region']:
         true_count = np.count_nonzero(data_batch['mask'].numpy()) // batch_size
         if logger == None:
             logger = get_root_logger()

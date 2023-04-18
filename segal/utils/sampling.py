@@ -1,4 +1,4 @@
-
+from copy import deepcopy
 from collections.abc import Sequence
 import pickle
 import torch
@@ -6,6 +6,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from mmcv.parallel import DataContainer
 from mmcv.runner import get_dist_info
+import numpy as np
 # from torch.utils.data.dataloader import default_collate
 # from mmcv.engine import collect_results_cpu
 
@@ -82,24 +83,61 @@ def batch_preprocess(data_batch):
 
     return ext_img, ext_img_meta
 
-def region_selector(budget: int, uc_map: torch.Tensor, 
-        radius: int, sample_evenly: bool):
+
+def region_selector(
+        budget: int, uc_map: torch.Tensor, radius: int, sample_evenly: bool):
     """
-    Perform region acquisition. Code adapted from the RIPU paper.
+    Perform region acquisition. This method assumes that the uc_map already has
+    the labeled region masked out to prevent selection.
     """
     assert sample_evenly, "region sampling is only implemented for sample_evenly=True"
     assert len(uc_map.shape)==2, \
-        f"expected uncertainty map to be 2D but got {len(uc_map.shape)} dimensions"
+        f"expected an uncertainty map to be 2D but got {len(uc_map.shape)} dimensions"
     
-    region_size = 2 * radius * 1
-    region_budgets = budget / (region_size**2)
-
-    for anchor in range(region_budgets):
-        values, indices_h = torch.max(uc_map, dim=0)
+    def update_selected(scores: torch.Tensor, selections: torch.Tensor, mask_radius: int):
+        """ helper function """
+        # iterative pick out the max
+        values, indices_h = torch.max(scores, dim=0)
         _, indices_w = torch.max(values, dim=0)
-        w, h = indices_w.item(), indices_h[w].item()
-
+        w = indices_w.item()
+        h = indices_h[w].item()
+        
+        # pick the surrounding region of the highest-uncertainty pixel
         active_start_w = w - radius if w - radius >= 0 else 0
         active_start_h = h - radius if h - radius >= 0 else 0
         active_end_w = w + radius + 1
         active_end_h = h + radius + 1
+        
+        # avoid future region selection that contains pixels (neighbors) already labeled
+        mask_start_w = w - mask_radius if w - mask_radius >= 0 else 0
+        mask_start_h = h - mask_radius if h - mask_radius >= 0 else 0
+        mask_end_w = w + mask_radius + 1
+        mask_end_h = h + mask_radius + 1
+        scores[mask_start_h:mask_end_h, mask_start_w:mask_end_w] = -float('inf')
+
+        # label new selection
+        selections[active_start_h:active_end_h, active_start_w:active_end_w] = 1.
+
+    scores = deepcopy(uc_map)
+    
+    # sample unit
+    region_size = 2 * radius + 1
+    region_budgets = budget // (region_size**2)
+    mask_radius = 2 * radius
+
+    selections = torch.zeros_like(uc_map)
+
+    for anchor in range(region_budgets):
+        update_selected(scores, selections, mask_radius)
+        
+    # some budget is unused due to labeling pixels on the edge of an image
+    selections = selections.cpu()
+    # while np.count_nonzero(selections) < budget:
+    #     update_selected(scores, selections, mask_radius)
+
+    np_selections = selections.flatten().numpy()
+    
+    # clear up cuda memory for local variables
+    del scores 
+
+    return np.nonzero(np_selections)

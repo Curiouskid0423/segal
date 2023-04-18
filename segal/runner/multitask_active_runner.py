@@ -32,7 +32,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         max_iters=None, max_epochs=None, sample_mode=None, sample_rounds=None, warmup_only=False):
 
         assert batch_processor is None 
-        assert sample_mode == 'pixel', \
+        assert sample_mode in ['pixel', 'region'], \
             "currently only pixel-sampling mode is supported for MultiTaskActiveRunner"
         
         self.warmup_only = warmup_only
@@ -107,8 +107,10 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
                 self.run_iter(data, mode='val_multitask', train_mode=False)
                 self.call_hook('after_val_iter')
 
-        self.logger.info(f"completed validation at iter {self.iter}...")
         self.call_hook('after_val_epoch')
+        self.logger.info(f"completed validation at iter {self.iter}...")
+        # clear out val variables for training logs
+        self.log_buffer.clear()
 
     def val(self, data_loader, **kwargs):
         """ default mmcv function. 
@@ -136,8 +138,8 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
         run an iteration of the given mode. `outputs` will be losses in both 
         train modes and the `val` mode.
         """
-        if not self.warmup_only and mode.startswith('train') and self.sample_mode == 'pixel':
-            ignore_index = self.cfg_al.settings.pixel.ignore_index
+        if not self.warmup_only and mode.startswith('train') and self.sample_mode in ['pixel', 'region']:
+            ignore_index = self.sample_settings.ignore_index
             data_batch = utils.preprocess_data_and_mask(data_batch, ignore_index)
 
         # local variable to avoid runtime error in forward() by removing 'mask'
@@ -163,7 +165,7 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
 
         self.outputs = outputs
 
-        if self.iter % 500 == 0: # and self.iter > 0:
+        if mode.startswith('train') and self.iter % 500 == 0: # and self.iter > 0:
             self.visualize_mae(num_samples=10, overlay_visible_patches=True)
 
 
@@ -280,11 +282,11 @@ class MultiTaskActiveRunner(ActiveLearningRunner):
 
         self.logger.info(f"saving MAE reconstructed images...")
 
+        # visualize the `source` during warmup and the `target` during active learning
         vis_dataset = self.query_dataset if not self.warmup_only else self.dataset
         vis_indices = [np.random.randint(0, len(vis_dataset)) for _ in range(num_samples)]
         
-        cwd = os.getcwd()
-        save_path = osp.join(cwd, self.configs.mae_viz_dir, f'iter{self.iter}')
+        save_path = osp.join(self.configs.mae_viz_dir, f'iter{self.iter}')
         crop_size = self.configs.model.backbone.img_size
 
         for idx in vis_indices:

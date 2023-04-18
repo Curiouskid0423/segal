@@ -140,9 +140,12 @@ class Random(AbstractHeuristic):
         
         if self.mode == 'image':
             return self.rng.rand(predictions.shape[0])
-        elif self.mode == 'pixel':
+        elif self.mode in ['pixel', 'region']:
             l, c, h, w = predictions.shape
             return self.rng.rand(l, h, w).astype(dtype=np.float16)
+        else:
+            module_name = self.__class__.__name__
+            raise NotImplementedError(f"mode {self.mode} not supported in {module_name}")
 
 class Entropy(AbstractHeuristic):
     """
@@ -173,8 +176,11 @@ class Entropy(AbstractHeuristic):
         probs = to_prob(predictions)
         if self.mode == 'image':
             return self.image_mean_entropy(probs)
-        elif self.mode == 'pixel':
+        elif self.mode in ['pixel', 'region']:
             return self.pixel_mean_entropy(probs)
+        else:
+            module_name = self.__class__.__name__
+            raise NotImplementedError(f"mode {self.mode} not supported in {module_name}")
 
 class MarginSampling(AbstractHeuristic):
     """
@@ -198,9 +204,11 @@ class MarginSampling(AbstractHeuristic):
         if self.mode == 'image':
             query_lst = query_map.reshape(query_map.shape[0], -1).mean(dim=-1) # shape: (b, 1)
             return query_lst.cpu().numpy()
-            
-        elif self.mode == 'pixel':
+        elif self.mode in ['pixel', 'region']:
             return query_map.cpu().numpy()
+        else:
+            module_name = self.__class__.__name__
+            raise NotImplementedError(f"mode {self.mode} not supported in {module_name}")
 
 class RegionImpurity(AbstractHeuristic):
     """

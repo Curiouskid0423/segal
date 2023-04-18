@@ -245,8 +245,7 @@ class SharedVisionTransformer(BaseModule):
             self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
             self.pos_embed.requires_grad_(False)
         else:
-            raise NotImplementedError(
-                f"unknown pos_embed_type {self.pos_embed_type}")
+            raise NotImplementedError(f"unknown pos_embed_type {self.pos_embed_type}")
         
         
     def _pos_embedding(self, patched_img, hw_shape, pos_embed):

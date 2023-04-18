@@ -148,7 +148,7 @@ def create_pixel_masks(
         args = [(fname, save_path, init_pixels, mask_shape) for fname in fnames]
         if rank == 0:
             LOGGER.warning("using multiprocessing to create mask without file locks! " 
-                           + "please ensure that all filenames are distinct")
+                           + "please ensure that all filenames are distinct.")
             mmcv.track_parallel_progress(helper, args, nproc=8)
             newline_after_pbar(rank)
 
