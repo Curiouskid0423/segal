@@ -32,7 +32,7 @@ class AbstractHeuristic:
     """
 
     def __init__(self, shuffle_prop=0.0, reverse=False, reduction="none"):
-        self.shuffle_prop = shuffle_prop
+        # self.shuffle_prop = shuffle_prop
         self.reversed = reverse
         assert reduction in available_reductions or callable(reduction)
         self._reduction_name = reduction
@@ -97,7 +97,7 @@ class AbstractHeuristic:
         ranks = np.argsort(scores) # Ascending order
         if self.reversed:
             ranks = ranks[::-1] # Descending order
-        ranks = _shuffle_subset(ranks, self.shuffle_prop)
+        # ranks = _shuffle_subset(ranks, self.shuffle_prop)
         return ranks
 
     def get_ranks(self, predictions):
@@ -120,9 +120,8 @@ class AbstractHeuristic:
 
 class Random(AbstractHeuristic):
 
-    def __init__(
-        self, shuffle_prop=1.0, mode="image", seed=None):
-        super().__init__(shuffle_prop=shuffle_prop, reverse=False)
+    def __init__(self, mode="image", seed=None):
+        super().__init__(reverse=False)
 
         self.mode = mode
         # rng = random number generator
@@ -135,8 +134,6 @@ class Random(AbstractHeuristic):
         
         if isinstance(predictions, Tensor):
             predictions = predictions.cpu().numpy()
-        
-        # return self.rng.rand(predictions.shape[0])
         
         if self.mode == 'image':
             return self.rng.rand(predictions.shape[0])
@@ -151,9 +148,9 @@ class Entropy(AbstractHeuristic):
     """
     Sort by entropy. The higher, the more uncertain.
     """
-    def __init__(self, mode, shuffle_prop=0):
+    def __init__(self, mode):
         # reverse = True to turn "ascending" result into a descending order.
-        super().__init__(shuffle_prop, reverse=True)
+        super().__init__(reverse=True)
         self.mode = mode
     
     def get_entropy(self, p, dim, keepdim):
@@ -189,8 +186,8 @@ class MarginSampling(AbstractHeuristic):
     we want to minimize this value, as opposed to Entropy and Random
     """
 
-    def __init__(self, mode, shuffle_prop=0):
-        super().__init__(shuffle_prop, reverse=False)
+    def __init__(self, mode):
+        super().__init__(reverse=False)
         self.mode = mode
 
     def compute_score(self, predictions, **kwargs):
@@ -215,14 +212,14 @@ class RegionImpurity(AbstractHeuristic):
     Region Impurity loss from AL-RIPU paper https://arxiv.org/abs/2111.12940
     """
 
-    def __init__(self, mode, categories, shuffle_prop=0, k=1, use_entropy=True):
+    def __init__(self, mode, categories, k=1, use_entropy=True):
         """
         Args:
             mode (str):     sampling mode. has to be either `pixel` or `region`
             k(int):         region size is defined as (2K+1) * (2K+1)
         """
         # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
-        super().__init__(shuffle_prop, reverse=True)
+        super().__init__(reverse=True)
         self.mode = mode
         self.use_entropy = use_entropy
         self.ripu_net = RIPU_Net(size=2*k+1, channels=categories).cuda()
@@ -240,3 +237,53 @@ class RegionImpurity(AbstractHeuristic):
         assert isinstance(softmax_pred, torch.Tensor), "Predictions in Region-Impurity has to be Tensor"
         scores = self.ripu_net(softmax_pred, use_entropy=self.use_entropy) # should be (b, h, w)
         return scores
+
+
+class MaskPredictionScore(AbstractHeuristic):
+    """
+    Use standardized MAE loss as sampling score
+    """
+
+    def __init__(self, mode, network, img_size, use_entropy=True):
+        """
+        Args:
+            mode (str):     sampling mode. has to be either `pixel` or `region`
+            k(int):         region size is defined as (2K+1) * (2K+1)
+        """
+        # reverse is set to true when the higher the uncertainty score, the more we want to sample it.
+        super().__init__(reverse=True)
+        self.mode = mode
+        self.use_entropy = use_entropy
+        self.network = network
+        self.query_img_size = img_size
+        assert len(img_size)==2
+        self.stride = min(img_size[0], img_size[1]) * 0.5
+
+    def compute_score(self, predictions, **kwargs):
+        """
+        Args:
+            prediction (np.array | Tensor): non-softmax logit score (size of [b, c, h, w])
+
+        Return:
+            uncertainty score (Tensor):     uncertainty score map of size [b, h, w]
+        """
+
+        assert len(predictions)==1, "MAE score can only be computed one at a time"
+        softmax_pred = to_prob(predictions) # softmax_pred size: (b, c, h, w)
+        
+        return None
+    
+    def slide_inference(self):
+        """
+        Adapted from mmseg slide_inference() method
+        """
+
+        """
+        e.g. an 1280 x 640 image, with a MAE model trained on 384x384 crops
+        the number of sliding inference will be 
+        ceil((1280 - 384) / 192) + 1 = 6 on width
+        ceil((640 - 384) / 192) + 1 = 3 on height
+        18 inferences in total. note that we use "ceil" and not "floor" since all 
+        pixels need to be computed.
+        """
+        pass

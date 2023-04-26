@@ -6,7 +6,8 @@ META_KEYS = ('filename', 'mask_filename', 'ori_filename', 'ori_shape',
              'img_shape', 'pad_shape', 'scale_factor', 'img_norm_cfg')
 source_free = False
 scale_size = (1280, 640) # (width, height) by mmcv convention
-crop_size = (384, 384)   # (224, 224)
+crop_size = (384, 384)
+# crop_size = (512, 512)
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 

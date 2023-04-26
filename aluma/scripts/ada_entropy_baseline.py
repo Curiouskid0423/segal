@@ -68,6 +68,14 @@ log_config = dict(
     interval=40,
     hooks=[
         dict(type='TextLoggerHook'),
+        dict(
+            type='WandbLoggerHookWithVal',
+            init_kwargs=dict(
+                entity='syn2real',
+                project='active_domain_adapt',
+                name=f'ada_entr_vit-b_16_ra',
+            )
+        )
     ]
 )
 

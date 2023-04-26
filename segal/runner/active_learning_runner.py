@@ -136,7 +136,7 @@ class ActiveLearningRunner(BaseRunner):
         for i, data_batch in enumerate(self.data_loader):
             # utils.pixel_mask_check(
             #     data_batch, batch_size, i, self.sample_mode, logger=self.logger)
-            if i >= 50: break
+            # if i >= 50: break
             self._inner_iter = i
             self.call_hook('before_train_iter')
             self.run_iter(data_batch, train_mode=True, **kwargs)

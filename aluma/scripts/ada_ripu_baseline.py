@@ -3,12 +3,17 @@ DATASET_LEN = 2975
 PIXEL_PER_IMG = int(1280*640*0.01) 
 BUDGET = PIXEL_PER_IMG * DATASET_LEN
 SPG = 2
-SAMPLE_ROUNDS = 3
+SAMPLE_ROUNDS = 5
 # path configs
 BASE = '../' 
 DATA_FILE = f'{BASE}dataset/gtav2cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}models/segmenter_linear_vit-b16.py'
+# effective lr
+# BASE_LR = 2.5e-4  # official repo
+# BASE_LR = 1e-4    # best performing (0423)
+BASE_LR = 5e-5
+BASE_BATCH = 2 
 # miscellaneous configs
 HEURISTIC = "ripu"
 VIZ_SIZE = 20
@@ -55,18 +60,25 @@ active_learning = dict(
 
 # workflow and runtime configs
 workflow = [
+    (('train', 5), ('query', 1)),
+    (('train', 3), ('query', 1)),
+    (('train', 3), ('query', 1)),
     (('train', 2), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 3),)
-] 
+    (('train', 2), ('query', 1)),
+    (('train', 8),)
+]
 
 runner = dict(type='ActiveLearningRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
 evaluation = dict(interval=800, by_epoch=False, metric='mIoU', pre_eval=True)
 checkpoint_config = dict(by_epoch=True, interval=5)
 
 # optimizers and learning rate
-optimizer = dict(type='SGD', lr=5e-4, momentum=0.9, weight_decay=0.0005)
+optimizer = dict(
+    type='SGD', 
+    lr=BASE_LR * (SPG * 8) / BASE_BATCH, 
+    momentum=0.9, 
+    weight_decay=0.0005,
+)
 optimizer_config = dict()
 lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=False)
 
@@ -75,5 +87,13 @@ log_config = dict(
     interval=40,
     hooks=[
         dict(type='TextLoggerHook'),
+        dict(
+            type='WandbLoggerHookWithVal',
+            init_kwargs=dict(
+                entity='syn2real',
+                project='active_domain_adapt',
+                name=f'ada_ripu_vit-b_16_ra',
+            )
+        )
     ]
 )

@@ -11,7 +11,9 @@ DATA_FILE = f'{BASE}dataset/gtav2cityscapes.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 SCHEDULE = f'{BASE}schedules/default.py' 
 # miscellaneous configs
-HEURISTICS = "entropy"
+HEURISTICS = "ripu"
+VIZ_SIZE = 20
+work_dir = './work_dirs/multitask_ra_lr5e-4_m50_1500warmup_e26'
 
 # base modules
 _base_ = [
@@ -30,7 +32,7 @@ data = dict(samples_per_gpu=SPG, workers_per_gpu=4)
 evaluation = dict(interval=500, by_epoch=False)
 
 # load_from = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
-load_from = "work_dirs/warmup/iter_1000.pth"
+load_from = "work_dirs/warmup/iter_1000.pth" # fcn decoder is random
 multitask_validation_iter = 200
 
 # model configs: simplify decoder head to mlp
@@ -49,12 +51,13 @@ model = dict(
 )
 
 # mixed precision
-fp16 = dict(loss_scale='dynamic')
+# fp16 = dict(loss_scale='dynamic')
 
 # workflow
 optimizer=dict(
-    lr=0.001, 
-    weight_decay=5e-5,
+    # _delete_=True,
+    lr=5e-4, 
+    weight_decay=5e-5, #0.5
     paramwise_cfg = dict(
         custom_keys={ 
             'backbone': dict(lr_mult=0.1),
@@ -67,8 +70,7 @@ lr_config = dict(
     _delete_=True,
     policy='poly',
     warmup='linear',
-    warmup_iters=500,
-    # warmup_ratio=0.01,
+    warmup_iters=1500, # 500
     power=1.0, 
     min_lr=1e-5,
     by_epoch=False
@@ -83,7 +85,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'aluma_vit-b_16_mae-IN1k-init_multitask',
+                name=f'aluma_vit-b_16_mae-IN1k-init_multitask_ra_batch16_1500warmup_e26',
             )
         )
     ]
@@ -92,33 +94,26 @@ log_config = dict(
 # ordinary workflow
 # workflow = [('train', QUERY_EPOCH), ('query', 1)]
 # multitask workflow
+# workflow = [
+#     (('train', 5), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 2), ('query', 1)),
+#     (('train', 2), ('query', 1)),
+#     (('train', 8),)
+# ]
 workflow = [
-    (('train', 2), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 1), ('query', 1)),
-    (('train', 10),)
+    (('train', 6), ('query', 1)),
+    (('train', 3), ('query', 1)),
+    (('train', 3), ('query', 1)),
+    (('train', 3), ('query', 1)),
+    (('train', 3), ('query', 1)),
+    (('train', 8),)
 ]
 
-runner = dict(type='MultiTaskActiveRunner', sample_mode="pixel", sample_rounds=SAMPLE_ROUNDS)
+runner = dict(type='MultiTaskActiveRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
 
 # active learning configs
-active_learning = dict(
-    settings = dict(
-        pixel = dict(      
-            budget_per_round=BUDGET,           
-            initial_label_pixels=0,
-            sample_evenly=True,
-            ignore_index=255,
-        ),
-    ),
-    reset_each_round=False,
-    heuristic=HEURISTICS,
-)
-
-"""
-runner = dict(type='MultiTaskActiveRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
 active_learning = dict(
     settings = dict(
         region = dict(      
@@ -126,10 +121,19 @@ active_learning = dict(
             initial_label_pixels=0,
             sample_evenly=True,
             ignore_index=255,
-            k=1,
+            radius=1,
         ),
+    ),
+    visualize = dict(
+        size=VIZ_SIZE,
+        overlay=True,
+        dir="visualizations/multitask_ra_lr5e-4_m50_1500warmup_e26"
+    ),
+    heuristic_cfg=dict(
+        k=1,
+        use_entropy=True,
+        categories=19 
     ),
     reset_each_round=False,
     heuristic=HEURISTICS,
 )
-"""

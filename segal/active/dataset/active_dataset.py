@@ -14,7 +14,7 @@ import os.path as osp
 import numpy as np
 from copy import deepcopy
 
-from active.dataset.base import OracleDataset
+from .base import OracleDataset
 from mmseg.datasets import build_dataset
 from mmseg.utils import get_root_logger
 

@@ -27,7 +27,7 @@ test_pipeline = [
         flip=False,
         transforms=[
             dict(type='Resize', keep_ratio=True),
-            dict(type='RandomFlip'),
+            # dict(type='RandomFlip'),
             dict(type='Normalize', **img_norm_cfg),
             dict(type='ImageToTensor', keys=['img']),
             dict(type='Collect', keys=['img']),
@@ -40,7 +40,9 @@ query_pipeline = [
     dict(type='Normalize', **img_norm_cfg),
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', 
-        keys=['img'],
+        keys=['img'], meta_keys=(
+            'filename', 'ori_filename', 'ori_shape', 
+            'img_shape', 'scale_factor', 'img_norm_cfg')
     )
 ]
 
