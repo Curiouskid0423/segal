@@ -1,10 +1,10 @@
 # Edits during baseline development
+mae_reconstructions/
+visualizations/
 viz*/
-queries_save_dir/
 pretrained_ckpts/
 wandb/
-baseline_dev/playground.py
-implementation_draft.txt
+dist_train_multiple.sh
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

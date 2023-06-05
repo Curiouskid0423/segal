@@ -17,7 +17,8 @@ model = dict(
         init_cfg=dict(
             type='Pretrained',
             checkpoint='open-mmlab://resnet50_v1c',
-        )),
+            )
+        ),
     neck=dict(
         type='FPN',
         in_channels=[256, 512, 1024, 2048],
