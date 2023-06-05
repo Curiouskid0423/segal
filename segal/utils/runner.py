@@ -75,6 +75,15 @@ def get_heuristics_by_config(config: Config, sample_mode: str):
                 use_entropy=hconfig.use_entropy,
                 categories=hconfig.categories
             )
+        elif config.active_learning.heuristic == 'mps':
+            heuristic = get_heuristics(
+                mode=sample_mode,
+                name='mps',
+                k=hconfig.k,
+                use_entropy=hconfig.use_entropy,
+                categories=hconfig.categories,
+                crop_size=hconfig.crop_size,
+            )
         else:
             raise NotImplementedError("Unknown heuristic for the provided heuristic_cfg.")
     else:

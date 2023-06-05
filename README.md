@@ -22,7 +22,7 @@ For detailed examples of how to use the SegAL functionalities, check `experiment
 
 #### Key files
 ```
-aluma/              // files of our new method (multitask active learning)
+almma/              // files of our new method (multitask active learning)
 configs/            // mmseg config files
 experiments/        // experiment related files
 mmseg/              // mmsegmentation source code (version 0.30.0)

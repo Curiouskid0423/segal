@@ -66,6 +66,8 @@ def engine(
         cap = int(len(seg_pix_entropy) * 0.01)
         if mask_ratio == 0.:
             # filter out the unimportant pixels for better visualization
+            # quantize masked_mae_loss
+            masked_mae_loss = torch.floor(masked_mae_loss * 10.)
             # truncate mae
             trunc_mae = masked_mae_loss.quantile(q=truncation)
             masked_mae_loss[masked_mae_loss < trunc_mae] = 0. 
@@ -73,8 +75,8 @@ def engine(
             trunc_entr = np.quantile(pixel_entropy, q=truncation)
             pixel_entropy[pixel_entropy < trunc_entr] = 0.
             # truncate cross entropy
-            trunc_cross_entr = np.quantile(pixel_cross_entropy, q=truncation)
-            pixel_cross_entropy[pixel_cross_entropy < trunc_cross_entr] = 0.
+            # trunc_cross_entr = np.quantile(pixel_cross_entropy, q=truncation)
+            # pixel_cross_entropy[pixel_cross_entropy < trunc_cross_entr] = 0.
             # truncate ripu
             trunc_ripu = np.quantile(pixel_ripu, q=truncation)
             pixel_ripu[pixel_ripu < trunc_ripu] = 0.
@@ -94,21 +96,21 @@ def engine(
         S, M = seg_pix_entropy[reordered], mae_rec_loss[reordered]
         corr, _ = pearsonr(S, M)
         
-        if plot:
-            print(f"there are {len(mae_rec_loss)} sample points. set threshold at {cap}.")
-            # plot the losses
-            plt.figure(figsize=(10, 6))
-            plt.title('seg_pix_entropy vs mae_rec_loss')
-            plt.scatter(S, M)
-            plt.xlabel('seg_pix_entropy')
-            plt.ylabel('mae_rec_loss')
-            print('plotted coeff:  %.4f' % corr)
+        # if plot:
+        #     print(f"there are {len(mae_rec_loss)} sample points. set threshold at {cap}.")
+        #     # plot the losses
+        #     plt.figure(figsize=(10, 6))
+        #     plt.title('seg_pix_entropy vs mae_rec_loss')
+        #     plt.scatter(S, M)
+        #     plt.xlabel('seg_pix_entropy')
+        #     plt.ylabel('mae_rec_loss')
+        #     print('plotted coeff:  %.4f' % corr)
 
-            # visualize images
-            vis_original_with_mae(IMG, mae_prediction, img_norm_cfg)
-            # visualize two uncertainties
-            vis_entropy_and_mae_loss(
-                pixel_entropy, 
-                masked_mae_loss
-            )
+        #     # visualize images
+        #     vis_original_with_mae(IMG, mae_prediction, img_norm_cfg)
+        #     # visualize two uncertainties
+        #     vis_entropy_and_mae_loss(
+        #         pixel_entropy, 
+        #         masked_mae_loss
+        #     )
         return corr

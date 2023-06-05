@@ -23,6 +23,7 @@ model = dict(
     mae_config=dict(
         # mask_ratio=0.75,
         mask_ratio=0.5,
+        # mask_ratio=0.6,
     ),
     backbone=dict(
         type='SharedVisionTransformer',
@@ -70,7 +71,7 @@ model = dict(
         norm_cfg=backbone_norm_cfg,
         align_corners=False,
         loss_decode=dict(
-            type='ReconstructionLoss', loss_weight=1.0),
+            type='ReconstructionLoss', loss_weight=15.0), # (FIXME: originally 10.0, 1.0)
     ),
     test_cfg=dict(mode='slide', crop_size=IMG_SIZE, stride=EVAL_STRIDE),
 )

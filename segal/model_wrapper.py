@@ -85,10 +85,18 @@ class ModelWrapper:
         for idx, data_batch in enumerate(test_loader):
 
             with torch.no_grad():
+                
+                # get logits
                 ext_img, ext_img_meta = batch_preprocess(data_batch)
                 logits = model.whole_inference(ext_img, ext_img_meta, rescale=False)
-                scores = heuristic.get_uncertainties(logits)
-                # Cannot store the entire pixel-level map due to memory shortage.
+                # get uncertainties
+                if self.cfg.active_learning.heuristic == 'mps':
+                    assert hasattr(model, 'mae_inference')
+                    scores = heuristic.compute_score(model, ext_img, logits, mix_factor=0.8)
+                else:
+                    scores = heuristic.get_uncertainties(logits)
+                
+                # compute query indices
                 if self.sample_mode in ['pixel', 'region']:
                     assert len(scores) == 1, "batch size not one for query dataloader"
                     # mask out labeled pixels to avoid reselection
@@ -103,8 +111,8 @@ class ModelWrapper:
                 elif self.sample_mode == 'image':
                     results.extend(scores)
                 else:
-                    raise NotImplementedError("sample_mode has to be either pixel or image currently")
-
+                    raise NotImplementedError
+                
             # Rank 0 worker will collect progress from all workers.
             if rank == 0:
                 completed = logits.size()[0] * world_size

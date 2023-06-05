@@ -39,9 +39,9 @@ def main():
 
     cfg = Config.fromfile(args.config)
 
-    # manually insert ignore_index for pixel sampling (and region-based in future development)
-    if cfg.runner.type in ['ActiveLearningRunner', 'MultiTaskActiveRunner'] \
-        and cfg.runner.sample_mode != 'image':
+    # manually insert ignore_index 
+    al_runner_types = ['ActiveLearningRunner', 'MultiTaskActiveRunner']
+    if cfg.runner.type in al_runner_types and cfg.runner.sample_mode != 'image':
         active_settings = cfg.active_learning.settings
         active_config = getattr(active_settings, cfg.runner.sample_mode)
         ignore_index = getattr(active_config, 'ignore_index')
@@ -112,7 +112,6 @@ def main():
 
     # log some basic info
     logger.info(f'Distributed training: {distributed}')
-    # Temporarily commented out since it's taking up space.
     # logger.info(f'Config:\n{cfg.pretty_text}')
 
     # set random seeds
@@ -155,7 +154,6 @@ def main():
             'avoid this error.')
         model = revert_sync_batchnorm(model)
 
-    # Temporarily commented out since it's taking up space.
     # logger.info(model)
 
     """ PART 3. Dataset """

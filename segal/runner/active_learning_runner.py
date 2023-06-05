@@ -343,7 +343,7 @@ class ActiveLearningRunner(BaseRunner):
                 # initiate a new dataloader if new data
                 new_loader = build_dataloader(
                     ds, samples_gpu, workers_gpu, num_gpu,
-                    dist = True if len(configs.gpu_ids) > 1 else False,
+                    shuffle = True, dist = True if len(configs.gpu_ids) > 1 else False,
                     seed = configs.seed, drop_last = True
                 ) 
                 

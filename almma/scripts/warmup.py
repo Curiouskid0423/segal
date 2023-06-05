@@ -51,7 +51,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'segmenter_vit-b_16_mae_batch64_warmup',
+                name=f'segmenter_vit-b16_mae_batch64_warmup',
             )
         )
     ]

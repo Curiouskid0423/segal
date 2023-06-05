@@ -83,11 +83,11 @@ def preprocess_datasets(config: Config, logger: Logger) -> Dict[str, Dataset]:
                     else:
                         assert isinstance(data_cfg, list) and len(data_cfg)==2
                         source, target = data_cfg
-                        source_set = build_dataset(source, dict(test_mode=False))
                         logger.info(f"creating source set ...")
+                        source_set = build_dataset(source, dict(test_mode=False))
         
-                        target_set = build_dataset(target, dict(test_mode=False))
                         logger.info(f"creating target set ...")
+                        target_set = build_dataset(target, dict(test_mode=False))
                         datasets['source'], datasets['target'] = source_set, target_set
                         datasets['train'] = ConcatDataset([source_set, target_set], separate_eval=False)
                 else:

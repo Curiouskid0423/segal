@@ -15,7 +15,7 @@ import torch.utils.data as torchdata
 import mmcv
 from mmcv.runner import master_only
 from mmseg.utils import get_root_logger
-from .heuristics import AbstractHeuristic, Random
+from .heuristics import AbstractHeuristic, Random, MaskPredictionScore
 from .dataset import ActiveLearningDataset
 from PIL import Image
 from segal.utils.misc import newline_after_pbar
@@ -239,7 +239,11 @@ class ActiveLearningLoop:
                     ext_img, ext_img_meta = ori['img'].data, ori['img_metas'].data
                     logits = model.module.whole_inference(
                         ext_img.unsqueeze(0).cuda(), ext_img_meta, rescale=False)
-                    scores = self.heuristic.get_uncertainties(logits)
+                    if isinstance(self.heuristic, MaskPredictionScore):
+                        scores = self.heuristic.compute_score(
+                            network=model.module, image=ext_img.unsqueeze(0).cuda(), seg_logit=logits)
+                    else:
+                        scores = self.heuristic.get_uncertainties(logits)
                     file_name = osp.join(epoch_vis_dir, f"{v}_uncertainty.png")
                     self.vis_uncertainty(ext_img, ext_img_meta, scores, file_name=file_name, alpha=0.7)
     

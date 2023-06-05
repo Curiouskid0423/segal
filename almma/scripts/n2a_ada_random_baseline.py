@@ -1,21 +1,20 @@
-# budget configs
+### budget configs
 DATASET_LEN = 2975
 PIXEL_PER_IMG = int(1280*640*0.01) 
 BUDGET = PIXEL_PER_IMG * DATASET_LEN
 SPG = 2
 SAMPLE_ROUNDS = 5
-# path configs
+### path configs
 BASE = '../' 
-DATA_FILE = f'{BASE}dataset/gtav2cityscapes.py'
+DATA_FILE = f'{BASE}dataset/cityscapes2acdc.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 MODEL_FILE = f'{BASE}models/segmenter_linear_vit-b16.py'
 # effective lr
-# BASE_LR = 2.5e-4  # official repo
-# BASE_LR = 1e-4    # best performing (0423)
-BASE_LR = 5e-5
+BASE_LR = 2.5e-4  # official repo
+# BASE_LR = 1.5e-4
 BASE_BATCH = 2 
 # miscellaneous configs
-HEURISTIC = "ripu"
+HEURISTIC = "random"
 VIZ_SIZE = 20
 
 _base_ = [ 
@@ -27,12 +26,13 @@ _base_ = [
 # data configs
 custom_imports = dict(
     imports=[
-        'experiments._base_.dataset_gtav',
+        'experiments._base_.dataset_acdc',
     ], allow_failed_imports=False
 )
+
 data = dict( samples_per_gpu=SPG, workers_per_gpu=2 ) 
 # mixed precision
-fp16 = dict(loss_scale='dynamic')
+# fp16 = dict(loss_scale='dynamic')
 # active learning configs
 active_learning = dict(
     settings = dict(
@@ -47,30 +47,33 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="visualizations/ada_ripu_baseline"
+        dir="visualizations/n2a_ada_random_baseline"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
-    heuristic_cfg=dict(
-        k=1,
-        use_entropy=True,
-        categories=19 
-    )
 )
 
 # workflow and runtime configs
+# workflow = [
+#     (('train', 5), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 3), ('query', 1)),
+#     (('train', 5),)
+# ] # 22 epochs
 workflow = [
-    (('train', 5), ('query', 1)),
-    (('train', 3), ('query', 1)),
-    (('train', 3), ('query', 1)),
+    (('train', 4), ('query', 1)),
     (('train', 2), ('query', 1)),
     (('train', 2), ('query', 1)),
-    (('train', 8),)
-]
+    (('train', 2), ('query', 1)),
+    (('train', 2), ('query', 1)),
+    (('train', 4),)
+] # 16 epochs (debug purpose)
 
 runner = dict(type='ActiveLearningRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
-evaluation = dict(interval=800, by_epoch=False, metric='mIoU', pre_eval=True)
-checkpoint_config = dict(by_epoch=True, interval=5)
+evaluation = dict(interval=300, by_epoch=False, metric='mIoU', pre_eval=True)
+checkpoint_config = dict(by_epoch=True, interval=10)
 
 # optimizers and learning rate
 optimizer = dict(
@@ -80,7 +83,7 @@ optimizer = dict(
     weight_decay=0.0005,
 )
 optimizer_config = dict()
-lr_config = dict(policy='poly', power=0.9, min_lr=5e-5, by_epoch=False)
+lr_config = dict(policy='poly', power=0.9, min_lr=1e-4, by_epoch=False)
 
 # logger hooks
 log_config = dict(
@@ -92,7 +95,7 @@ log_config = dict(
             init_kwargs=dict(
                 entity='syn2real',
                 project='active_domain_adapt',
-                name=f'ada_ripu_vit-b_16_ra',
+                name=f'ada_random_vit-b16_ra_cs2acdc',
             )
         )
     ]
