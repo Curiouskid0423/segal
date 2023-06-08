@@ -1,11 +1,11 @@
 ### budget configs
-DATASET_LEN = 2975
+DATASET_LEN = 1600 
 PIXEL_PER_IMG = int(1280*640*0.01) 
 BUDGET = PIXEL_PER_IMG * DATASET_LEN
 SPG = 2
 SAMPLE_ROUNDS = 5
 ### path configs
-BASE = '../' 
+BASE = '../../' 
 DATA_FILE = f'{BASE}dataset/cityscapes2acdc.py'
 MODEL_FILE = f'{BASE}models/twin_segmenter.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
@@ -46,14 +46,16 @@ model = dict(
         concat_input=False,
         num_classes=19,
         loss_decode=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0))
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+    auxiliary_head=dict(
+        loss_decode=dict(
+            type='ReconstructionLoss', loss_weight=10.0))
 )
 
 # workflow
 multitask_validation_iter = 200
 optimizer=dict(
-    # _delete_=True,
-    lr=7.5e-4, 
+    lr=5e3, 
     weight_decay=5e-5,
     paramwise_cfg = dict(
         custom_keys={ 
@@ -69,7 +71,7 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=1000, 
     power=1.0, 
-    min_lr=2e-5,
+    min_lr=1e-5,
     by_epoch=False
 )
 
@@ -87,7 +89,7 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="visualizations/ada_random_multitask"
+        dir="visualizations/n2a_lr5e-3_wd5e-5_recloss10"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
@@ -100,12 +102,12 @@ workflow = [
     (('train', 2), ('query', 1)),
     (('train', 2), ('query', 1)),
     (('train', 2), ('query', 1)),
-    (('train', 4),)
-] # 16 epochs (debug purpose)
+    (('train', 3),)
+] # 15 epochs (debug purpose)
 
 runner = dict(type='MultiTaskActiveRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
 evaluation = dict(interval=300, by_epoch=False, metric='mIoU', pre_eval=True)
-checkpoint_config = dict(by_epoch=True, interval=10)
+checkpoint_config = dict(by_epoch=True, interval=5)
 
 # logger hooks
 log_config = dict(
@@ -114,11 +116,11 @@ log_config = dict(
         dict(type='TextLoggerHook'),
         dict(
             type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='active_domain_adapt',
-                group='aaai',
-                name=f'almma_random_vit-b16_ra_cs2acdc',
+            init_kwargs = dict(
+                entity  = 'syn2real',
+                project = 'active_domain_adapt',
+                group   = 'aaai',
+                name    = f'n2a_lr5e-3_wd5e-5_recloss10_cs2acdc',
             )
         )
     ]

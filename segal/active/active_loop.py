@@ -245,6 +245,6 @@ class ActiveLearningLoop:
                     else:
                         scores = self.heuristic.get_uncertainties(logits)
                     file_name = osp.join(epoch_vis_dir, f"{v}_uncertainty.png")
-                    self.vis_uncertainty(ext_img, ext_img_meta, scores, file_name=file_name, alpha=0.7)
+                    self.vis_uncertainty(ext_img, ext_img_meta, scores, file_name=file_name, alpha=1.0)
     
         self.round += 1

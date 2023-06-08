@@ -31,12 +31,12 @@ class ModelWrapper:
         self.backbone = model
         self.logger = get_root_logger()
         self.cfg = cfgs
-        # assert cfgs.model.test_cfg.mode == 'whole', \
-        #     "ModelWrapper does not support `slide` query inference"
+        self.sample_rounds = cfgs.runner.sample_rounds
         self.sample_mode = cfgs.runner.sample_mode
         self.sample_settings = getattr(cfgs.active_learning.settings, self.sample_mode)
         self.gpu_ids = cfgs.gpu_ids
         self.seed = cfgs.seed
+        self.expl_counter = -1 # counter for exploration schedule
 
     def set_sample_evenly(self):
 
@@ -80,8 +80,12 @@ class ModelWrapper:
 
         self.logger.info(f"computing uncertainty scores...")
         
-        if rank == 0: pbar = mmcv.ProgressBar(len(dataset))
-
+        if rank == 0: 
+            if self.cfg.active_learning.heuristic == 'mps':
+                self.expl_counter += 1
+                self.logger.info(f'[linear expl schedule] expl_counter = {self.expl_counter}')
+            pbar = mmcv.ProgressBar(len(dataset))
+            
         for idx, data_batch in enumerate(test_loader):
 
             with torch.no_grad():
@@ -92,7 +96,15 @@ class ModelWrapper:
                 # get uncertainties
                 if self.cfg.active_learning.heuristic == 'mps':
                     assert hasattr(model, 'mae_inference')
-                    scores = heuristic.compute_score(model, ext_img, logits, mix_factor=0.8)
+                    # set mix_factor according to the exploration schedule
+                    if self.cfg.active_learning.heuristic == 'mps':
+                        if heuristic.expl_schedule == 'constant':
+                            mps_mix_factor = 1.
+                        elif heuristic.expl_schedule == 'linear':
+                            mps_mix_factor = max(self.sample_rounds-self.expl_counter-1, 0) / (self.sample_rounds-1)
+                        else:
+                            raise NotImplementedError
+                    scores = heuristic.compute_score(model, ext_img, logits, mix_factor=mps_mix_factor)
                 else:
                     scores = heuristic.get_uncertainties(logits)
                 

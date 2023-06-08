@@ -139,10 +139,13 @@ class ActiveLearningDataset(OracleDataset):
         h, w = mask_shape
         N = len(self.dataset)
         init_pixels = self.settings['initial_label_pixels'] // N
-        assert init_pixels < h * w, "initial_label_pixels exceeds the total number of pixels"
+        assert init_pixels <= h * w, \
+            f"init_pixels exceeds the total number of pixels. expected {h}x{w} but got {init_pixels}."
         assert type(init_pixels) is int, f"initial_label_pixels has to be type int but got {type(init_pixels)}"
 
         # create masks for (1) 'query' always (2) 'train' but only when running ADA setting
+        keep_pixels = np.prod(mask_shape) if mask_type=='source' else init_pixels
+            
         if self.source_free:
             if mask_type == 'query':
                 create_pixel_masks(
@@ -150,11 +153,11 @@ class ActiveLearningDataset(OracleDataset):
                     dataset=self.dataset, 
                     mask_shape=mask_shape,
                     mask_type=mask_type, 
-                    init_pixels=keep_pixels
+                    init_pixels=keep_pixels,
+                    pattern = f"*{self.dataset.img_suffix}"
                 ) 
         else:
             assert mask_type in ['source', 'target']
-            keep_pixels = np.prod(mask_shape) if mask_type=='source' else init_pixels
             
             if hasattr(self.dataset, 'img_suffix'):
                 pattern = f"*{self.dataset.img_suffix}"

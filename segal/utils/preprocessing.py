@@ -29,6 +29,8 @@ def append_mask_dir(mask_dir: str, curr_dataset: Union[Config, List]) -> Config:
             setattr(new_config.pipeline[idx], "mask_dir", mask_dir)
             return new_config
 
+    return new_config # in case where `LoadMasks` is not found
+
 
 def preprocess_datasets(config: Config, logger: Logger) -> Dict[str, Dataset]:
 

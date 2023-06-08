@@ -245,7 +245,8 @@ class MaskPredictionScore(AbstractHeuristic):
     Use standardized MAE loss as sampling scores. 
     """
 
-    def __init__(self, mode, crop_size, use_entropy=True, k=1, categories=19):
+    def __init__(self, mode, crop_size, use_entropy=True, 
+                 expl_schedule='constant', k=1, categories=19):
         """
         Args:
             mode (str):     sampling mode. has to be either `pixel` or `region`
@@ -255,12 +256,14 @@ class MaskPredictionScore(AbstractHeuristic):
         # the more we want to sample it, which is true for MAE loss.
         super().__init__(reverse=True)
         self.mode = mode
+        self.expl_schedule = expl_schedule
         self.use_entropy = use_entropy 
         if use_entropy:
             self.ripu_engine = RegionImpurity(mode='pixel', categories=categories, k=k)
         self.crop_size = crop_size
         assert len(crop_size)==2, 'crop_size has to be a 2-element tuple'
-        self.stride = int(min(crop_size[0], crop_size[1]) * 0.5)
+        # self.stride = int(min(crop_size[0], crop_size[1]) * 0.5)
+        self.stride = int(min(crop_size[0], crop_size[1]) * 0.2)
 
     def compute_score(self, network, image, seg_logit=None, mix_factor=1., just_mae=False):
         """
@@ -274,11 +277,16 @@ class MaskPredictionScore(AbstractHeuristic):
         pixel_loss_map = pixel_loss_map.mean(dim=1).cpu().numpy() # [1, H, W]
         mae_score = pixel_loss_map / (pixel_loss_map.max() + 1e-6)
         if self.use_entropy and (not just_mae):
+            
             assert seg_logit != None
+
             ripu_score = self.ripu_engine.get_uncertainties(seg_logit) # [1, H, W]
             ripu_score = ripu_score / (ripu_score.max() + 1e-6)
-            mix_score = ripu_score * mix_factor + mae_score     # mix the two scores
-            mix_score = mix_score / (mix_score.max() + 1e-6)    # normalize
+            
+            # mix the two scores and normalize (FIXME: is the scaling right?)
+            mix_score = (1-mix_factor) * ripu_score + mix_factor * mae_score    
+            mix_score = mix_score / (mix_score.max() + 1e-6)
+            
             return mix_score
         else:
             return mae_score

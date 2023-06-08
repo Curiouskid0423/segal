@@ -83,6 +83,7 @@ def get_heuristics_by_config(config: Config, sample_mode: str):
                 use_entropy=hconfig.use_entropy,
                 categories=hconfig.categories,
                 crop_size=hconfig.crop_size,
+                expl_schedule=hconfig.expl_schedule
             )
         else:
             raise NotImplementedError("Unknown heuristic for the provided heuristic_cfg.")

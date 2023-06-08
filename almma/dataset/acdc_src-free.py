@@ -1,21 +1,20 @@
-### cityscapes config
-cs_root = '/shared/yutengli/data/cityscapes/'
-### acdc config
+################################################
+# For MTL warmup (both MAE and Segmentation)   #
+################################################
+
+# dataset configs
 acdc_root = '/shared/yutengli/data/acdc/'
-### pipeline basic settings
-META_KEYS = ('filename', 'mask_filename', 'ori_filename', 'ori_shape',
-             'img_shape', 'pad_shape', 'scale_factor', 'img_norm_cfg')
-source_free = False
-
-scale_size = (1138, 640) # (W, H) by mmcv convention
-crop_size = (384, 384)
-
+source_free = True
+scale_size = (1138, 640) # (width, height) by mmcv convention
+crop_size = (384, 384)   # (512, 512)
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], 
     std=[58.395, 57.12, 57.375], 
     to_rgb=True)
+META_KEYS = ('filename', 'mask_filename', 'ori_filename', 'ori_shape',
+             'img_shape', 'pad_shape', 'scale_factor', 'img_norm_cfg')
 
-### various pipelines
+# various pipelines
 train_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='LoadAnnotations'),
@@ -40,6 +39,7 @@ query_pipeline = [
         meta_keys=META_KEYS,
     )
 ]
+
 test_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
@@ -54,28 +54,28 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
-### source: Cityscpapes
-source_dataset_dict = dict(
-    type='CityscapesDataset', data_root=cs_root,
-    img_dir='leftImg8bit/train', ann_dir='gtFine/train')
-### target: ACDC
-target_dataset_dict = dict(
+
+train_source_dataset = dict(
     type='ACDCDataset', data_root=acdc_root,
     img_dir='rgb_anon/everything/train',
-    ann_dir='ground_truth/everything/train')
+    ann_dir='ground_truth/everything/train',
+    pipeline=train_pipeline)
+
 val_dataset_dict = dict(
     type='ACDCDataset', data_root=acdc_root,
     img_dir='rgb_anon/everything/val',
     ann_dir='ground_truth/everything/val')
-train_source_dataset = dict(**source_dataset_dict, pipeline=train_pipeline)
-train_target_dataset = dict(**target_dataset_dict, pipeline=train_pipeline)
-query_dataset = dict(**target_dataset_dict, pipeline=query_pipeline)
 
-### final MMCV data config
+query_dataset = dict(
+    type='ACDCDataset', data_root=acdc_root,
+    img_dir='rgb_anon/everything/train',
+    ann_dir='ground_truth/everything/train', 
+    pipeline=query_pipeline)
+
 data = dict(
     samples_per_gpu=2,
     workers_per_gpu=2,
-    train = [ train_source_dataset, train_target_dataset ],
+    train = train_source_dataset,
     query = query_dataset,
     val = dict(**val_dataset_dict, pipeline=test_pipeline),
     test = dict(**val_dataset_dict, pipeline=test_pipeline)

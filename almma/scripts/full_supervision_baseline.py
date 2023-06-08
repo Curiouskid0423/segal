@@ -28,12 +28,12 @@ log_config = dict(
     interval=50,
     hooks=[
         dict(type='TextLoggerHook'),
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real', project='active_domain_adapt', 
-                name=f'segmenter-linear_vit-b16_full_supervision_cs'
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real', project='active_domain_adapt', 
+        #         name=f'segmenter-linear_vit-b16_full_supervision_cs'
+        #     )
+        # )
     ]
 )

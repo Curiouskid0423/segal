@@ -1,7 +1,6 @@
 # checkpoints
 # checkpoint = 'https://download.openmmlab.com/mmsegmentation/v0.5/pretrain/segmenter/vit_base_p16_384_20220308-96dfe169.pth'
-# checkpoint =  "../mae_pretrain_vit_base_mmcv.pth"
-checkpoint = "/home/yutengli/workspace/vit_pretrained_checkpoints/mae_visualize_vit_base_mmcv.pth"
+checkpoint = "/shared/yutengli/vit_ckpts/warmup/mae_visualize_vit_base_mmcv.pth"
 
 # model settings
 backbone_norm_cfg = dict(type='LN', eps=1e-6, requires_grad=True)

@@ -80,14 +80,14 @@ log_config = dict(
     interval=40,
     hooks=[ 
         dict(type='TextLoggerHook'), 
-        dict(
-            type='WandbLoggerHookWithVal',
-            init_kwargs=dict(
-                entity='syn2real',
-                project='active_domain_adapt',
-                name=f'almma_vit-b16_mae-IN1k-init_multitask_ra_batch16_1500warmup_e26',
-            )
-        )
+        # dict(
+        #     type='WandbLoggerHookWithVal',
+        #     init_kwargs=dict(
+        #         entity='syn2real',
+        #         project='active_domain_adapt',
+        #         name=f'almma_vit-b16_mae-IN1k-init_multitask_ra_batch16_1500warmup_e26',
+        #     )
+        # )
     ]
 )
 
@@ -108,7 +108,7 @@ workflow = [
     (('train', 3), ('query', 1)),
     (('train', 3), ('query', 1)),
     (('train', 3), ('query', 1)),
-    (('train', 8),)
+    (('train', 50),)
 ]
 
 runner = dict(type='MultiTaskActiveRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
