@@ -4,6 +4,7 @@ SAMPLE_ROUNDS = 5
 ### path configs
 BASE = '../../' 
 DATA_FILE = f'{BASE}dataset/acdc_src-free.py'
+# DATA_FILE = f'{BASE}dataset/cityscapes_src-free.py'
 MODEL_FILE = f'{BASE}models/twin_segmenter.py'
 RUNTIME_FILE = f'{BASE}../configs/_base_/default_runtime.py'
 SCHEDULE = f'{BASE}schedules/default.py'
@@ -16,7 +17,7 @@ _base_ = [
 ]
 
 ### data configs
-data = dict( samples_per_gpu=SPG, workers_per_gpu=3 ) 
+data = dict( samples_per_gpu=SPG, workers_per_gpu=4 ) 
 
 # mixed precision
 fp16 = dict(loss_scale='dynamic')

@@ -5,16 +5,18 @@ Code mostly similar to BAAL.
 """
 from typing import Callable
 import numpy as np
-import matplotlib.pyplot as plt
 from datetime import datetime
 import os
 import os.path as osp
 import pickle
 import torch
+import torch.nn.functional as F
 import torch.utils.data as torchdata
+import matplotlib.pyplot as plt
 import mmcv
 from mmcv.runner import master_only
 from mmseg.utils import get_root_logger
+from mmseg.apis.inference import show_result_pyplot                    
 from .heuristics import AbstractHeuristic, Random, MaskPredictionScore
 from .dataset import ActiveLearningDataset
 from PIL import Image
@@ -136,7 +138,7 @@ class ActiveLearningLoop:
         Return: 
         True if successfully stepped, False if not (thus stop training)
         """
-
+        
         if self.sample_mode == 'image':
             if pool == None:
                 pool = self.dataset.pool
@@ -173,9 +175,21 @@ class ActiveLearningLoop:
         vis_mask = mask.astype(np.uint8)[..., None].repeat(3, axis=-1)
         vis_mask[vis_mask == 1] = 255 # (256, 512, 3) RGB image
         vis_mask = Image.fromarray(vis_mask, 'RGB')
-        result = Image.blend(ori, vis_mask, alpha=0.5)
+        result = Image.blend(ori, vis_mask, alpha=0.6)
         result.save(file_name)
         
+    def onehot_with_ignore_label(self, labels, num_classes, ignore_label):
+        dummy_label = num_classes + 1
+        mask = (labels == ignore_label) # mask==1 should be removed
+        modified_labels = labels.clone()
+        modified_labels[mask] = num_classes
+        # One-hot encode the modified labels
+        one_hot_labels: torch.Tensor = F.one_hot(modified_labels, num_classes=dummy_label)
+        # Remove the last row in the one-hot encoding
+        one_hot_labels = one_hot_labels.permute(0, 3, 1, 2)
+        one_hot_labels = one_hot_labels[:, :-1, :, :]
+        return one_hot_labels.to(float)
+
     def revert_transforms(self, original_image, img_metas):
         # normalization configs
         norm_cfg = img_metas['img_norm_cfg']
@@ -188,12 +202,65 @@ class ActiveLearningLoop:
         ori = (ori.numpy() * std + mean).astype(np.uint8)
         return ori
     
+    def get_loss_map(self, img, gt, logit, file_name, ignore_label=255,
+                     cmap1='gray', cmap2='viridis', alpha=0.9):
+        """ Plot the loss pixel-map given a logit (C, H, W) and a ground_truth
+        shape [C, H, W]
+        """
+        if len(logit.shape) == 4:
+            logit = logit.squeeze(0) # (C=19, H, W)  (19, 640, 1138)
+
+        # print(f"[get_loss_map] img shape: {img.shape}")
+        # print(f"[get_loss_map] gt shape: {gt.shape}")
+        # print(f"[get_loss_map] logit shape: {logit.shape}")
+        
+        one_hot_gt = self.onehot_with_ignore_label(gt, num_classes=len(logit), ignore_label=ignore_label)
+        one_hot_gt = one_hot_gt.squeeze(0)
+        # print(f"one_hot_gt shape: {one_hot_gt.shape}")
+        softmax_pred = F.softmax(logit, dim=0)
+        log_loss = -(one_hot_gt * softmax_pred.log()).mean(dim=0, keepdim=False).cpu() # (H, W)
+
+        # create error plots (overlay log_loss on top of the image)
+        plt.figure(figsize=(15, 10))
+        plt.title(f'Cross-entropy Loss Map ({file_name.split("/")[-1]})')
+        plt.imshow(img, cmap=cmap1)
+        plt.imshow(log_loss, cmap=cmap2, alpha=alpha)
+        plt.colorbar()
+        plt.savefig(file_name)
+        plt.close()
+        
+    def get_error_map(self, img, logit: torch.Tensor, gt: torch.Tensor, file_name, 
+                      ignore_label=255, cmap1='gray', cmap2='viridis', alpha = 0.7):
+        
+        if len(logit.shape) == 4:
+            logit = logit.squeeze(0) # (C=19, H, W)  (19, 640, 1138)
+        
+        pred = F.softmax(logit, dim=0)
+        pred = pred.argmax(dim=0, keepdim=True) # (1, H, W), value from 0 ~ 18
+        gt = gt.squeeze(0) # (1, H, W)
+        # print(f"pred shape: {pred.shape}")
+        # print(f"gt shape: {gt.shape}")
+    
+        err_mask = (gt != pred) & (gt != ignore_label) # True means "is an error"
+
+        # print(f"err_mask shape: {err_mask.shape}") # (1, 640, 1138)
+        err_mask = err_mask.permute(1,2,0).to(int).cpu()
+        err_mask[err_mask == 1] = 255 # change color value to white
+
+        # create error plots (overlay log_loss on top of the image)
+        plt.figure(figsize=(15, 10))
+        plt.title(f'Misprediction / Error Map ({file_name.split("/")[-1]})')
+        plt.imshow(img, cmap=cmap1)
+        plt.imshow(err_mask, cmap=cmap2, alpha=alpha)
+        plt.colorbar()
+        plt.savefig(file_name)
+        plt.close()
+        
     @master_only
     def vis_uncertainty(
-        self, img, img_metas, scores, file_name, alpha=0.5, 
+        self, img, scores, file_name, alpha=0.5, 
         cmap1='gray', cmap2='viridis', overlay_img=True):
         
-        img_np = self.revert_transforms(img, img_metas)
             
         # type conversions
         if isinstance(scores, torch.Tensor):
@@ -202,8 +269,10 @@ class ActiveLearningLoop:
             scores = scores.squeeze(0)
 
         # create uncertainty plots 
+        plt.figure(figsize=(15, 10))
+        plt.title(f'Uncertainty Map ({file_name.split("/")[-1]})')
         if overlay_img:
-            plt.imshow(img_np, cmap=cmap1)
+            plt.imshow(img, cmap=cmap1)
         plt.imshow(scores, cmap=cmap2, alpha=alpha)
         plt.colorbar()
         plt.savefig(file_name)
@@ -232,19 +301,60 @@ class ActiveLearningLoop:
             else:
                 self.vis_in_comparison(file_name, unnormalized_image, mask)
             
-            # visualize prediction uncertainty map
             if model != None:
                 # model.eval() should be called in runner file already
                 with torch.no_grad():
                     ext_img, ext_img_meta = ori['img'].data, ori['img_metas'].data
                     logits = model.module.whole_inference(
-                        ext_img.unsqueeze(0).cuda(), ext_img_meta, rescale=False)
+                        ext_img.unsqueeze(0).cuda(), ext_img_meta, rescale=False) # (B, C, H, W)
                     if isinstance(self.heuristic, MaskPredictionScore):
                         scores = self.heuristic.compute_score(
                             network=model.module, image=ext_img.unsqueeze(0).cuda(), seg_logit=logits)
                     else:
-                        scores = self.heuristic.get_uncertainties(logits)
-                    file_name = osp.join(epoch_vis_dir, f"{v}_uncertainty.png")
-                    self.vis_uncertainty(ext_img, ext_img_meta, scores, file_name=file_name, alpha=1.0)
-    
+                        scores = self.heuristic.get_uncertainties(logits) # 100 bins
+
+                    
+                    uncertainty_fname = osp.join(epoch_vis_dir, f"{v}_uncertainty.png")
+                    qt_uncertainty_fname = osp.join(epoch_vis_dir, f"{v}_uncertainty_qt.png")
+                    loss_map_fname = osp.join(epoch_vis_dir, f"{v}_loss_map.png")
+                    error_map_fname = osp.join(epoch_vis_dir, f"{v}_error_map.png")
+
+                    original_image = self.revert_transforms(ext_img, ext_img_meta)
+
+                    # visualize uncertainty score map                    
+                    self.vis_uncertainty(original_image, scores, file_name=uncertainty_fname, alpha=0.9)
+
+                    # quantization section
+                    bin_size = 0.05 # 20 bins 
+                    bins = np.arange(0, 1.0, bin_size)
+                    score_quantized = np.digitize(scores, bins, right=True) * bin_size
+                    self.vis_uncertainty(
+                        original_image, score_quantized, file_name=qt_uncertainty_fname, alpha=0.9)
+
+                    # visualize the cross-entropy loss map
+                    self.get_loss_map(
+                        img = original_image,
+                        gt  = ori['gt_semantic_seg'].data.cuda(), 
+                        logit = logits, 
+                        file_name = loss_map_fname)
+
+                    # visualize the errors (i.e. mispredictions)
+                    self.get_error_map(
+                        img=original_image, 
+                        logit=logits, 
+                        gt=ori['gt_semantic_seg'].data.cuda(), 
+                        file_name=error_map_fname)
+
+                    # visualize the segmentation map
+                    result = torch.argmax(logits, dim=1, keepdim=False) # (B, H, W)
+                    ext_img = ext_img.permute(1,2,0) # (H, W, C)
+                    show_result_pyplot(
+                        model=model.module, 
+                        img=ext_img.cpu().numpy(), 
+                        result=result.cpu().numpy(),
+                        palette=self.query_dataset.dataset.PALETTE,
+                        out_file=osp.join(epoch_vis_dir, f"{v}_segmap.png"))
+
+                    plt.close('all')
+
         self.round += 1

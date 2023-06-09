@@ -30,12 +30,13 @@ train_pipeline = [
 ]
 query_pipeline = [
     dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations'),
     dict(type='LoadMasks'),
     dict(type='ResizeWithMask', img_scale=scale_size),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', 
-        keys=['img', 'mask'], 
+        keys=['img', 'gt_semantic_seg', 'mask'], 
         meta_keys=META_KEYS,
     )
 ]

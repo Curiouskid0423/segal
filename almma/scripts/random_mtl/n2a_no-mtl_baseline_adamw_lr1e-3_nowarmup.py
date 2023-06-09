@@ -47,7 +47,7 @@ active_learning = dict(
     visualize = dict(
         size=VIZ_SIZE,
         overlay=True,
-        dir="visualizations/n2a_no-mtl_baseline_adamw"
+        dir="visualizations/n2a_no-mtl_baseline_adamw_lr1e-3_nowarmup"
     ),
     reset_each_round=False,
     heuristic=HEURISTIC,
@@ -63,6 +63,7 @@ workflow = [
     (('train', 3),)
 ] # 15 epochs (debug purpose)
 
+load_from = "work_dirs/gtav_init_after50epochs/epoch_50.pth" # mIoU 71.76 on Cityscapes
 runner = dict(type='ActiveLearningRunner', sample_mode="region", sample_rounds=SAMPLE_ROUNDS)
 evaluation = dict(interval=300, by_epoch=False, metric='mIoU', pre_eval=True)
 checkpoint_config = dict(by_epoch=True, interval=10)
@@ -81,8 +82,8 @@ optimizer=dict(
 lr_config = dict(
     _delete_=True,
     policy='poly',
-    warmup='linear',
-    warmup_iters=1000, 
+    # warmup='linear',
+    # warmup_iters=1000, 
     power=1.0, 
     min_lr=1e-5,
     by_epoch=False
@@ -100,7 +101,7 @@ log_config = dict(
                 entity  = 'syn2real',
                 project = 'active_domain_adapt',
                 group   = 'aaai',
-                name    = f'ada_no-mtl_baseline_adamw_cs2acdc',
+                name    = f'ada_no-mtl_baseline_adamw_cs2acdc_lr1e-3_nowarmup',
             )
         )
     ]

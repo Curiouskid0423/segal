@@ -102,6 +102,7 @@ class ModelWrapper:
                             mps_mix_factor = 1.
                         elif heuristic.expl_schedule == 'linear':
                             mps_mix_factor = max(self.sample_rounds-self.expl_counter-1, 0) / (self.sample_rounds-1)
+                            mps_mix_factor *= 0.8
                         else:
                             raise NotImplementedError
                     scores = heuristic.compute_score(model, ext_img, logits, mix_factor=mps_mix_factor)
